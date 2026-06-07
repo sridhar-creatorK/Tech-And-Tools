@@ -91,13 +91,13 @@ const appRegistry = {
 let windowOffset = 0;
 let activeDevice = 'Computer';
 
-function switchStage(stageName) {
-  const stages = {
-    landing: landingStage,
-    device: deviceStage,
-    desktop: desktopStage,
-  };
+const stages = {
+  landing: landingStage,
+  device: deviceStage,
+  desktop: desktopStage,
+};
 
+function switchStage(stageName) {
   Object.entries(stages).forEach(([name, stage]) => {
     const isActive = name === stageName;
     stage.classList.toggle('is-active', isActive);
@@ -105,7 +105,8 @@ function switchStage(stageName) {
   });
 }
 
-function showDeviceSelection() {
+function showDeviceSelection(event) {
+  event?.preventDefault();
   switchStage('device');
 }
 
@@ -133,6 +134,8 @@ function launchDesktop(device) {
 function resetSystem() {
   windowLayer.innerHTML = '';
   windowOffset = 0;
+  activeDevice = 'Computer';
+  systemMode.textContent = 'WizOS - Computer Mode';
   switchStage('landing');
 }
 
@@ -234,7 +237,7 @@ function createAssistantReply(message) {
   return 'I captured that. This local shell can be upgraded with model-backed intelligence, tool calls, memory, and media generation workflows.';
 }
 
-getStartedBtn.addEventListener('click', showDeviceSelection);
+getStartedBtn.addEventListener('click', showDeviceSelection, { passive: false });
 
 document.querySelectorAll('[data-device]').forEach((button) => {
   button.addEventListener('click', () => launchDesktop(button.dataset.device));
