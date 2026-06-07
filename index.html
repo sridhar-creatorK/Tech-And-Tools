@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Tech And Tools Web OS - a polished multi-tool desktop interface." />
+  <title>Tech And Tools | WizOS</title>
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" />
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+    crossorigin="anonymous"
+    referrerpolicy="no-referrer"
+  />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+  <div class="ambient ambient-three" aria-hidden="true"></div>
+
+  <main id="app" class="shell" aria-live="polite">
+    <section id="deviceStage" class="stage device-stage is-active" aria-labelledby="deviceTitle">
+      <div class="hero-panel glass-card">
+        <p class="eyebrow">Tech And Tools presents WizOS</p>
+        <h1 id="deviceTitle">Select Your Device to Continue</h1>
+        <p class="hero-copy">
+          Choose your preferred workspace profile and launch a fluid, glass-powered productivity suite.
+        </p>
+
+        <div class="device-grid" role="list" aria-label="Device choices">
+          <button class="device-card computer-card" type="button" data-device="Computer" role="listitem">
+            <span class="device-icon"><i class="fa-solid fa-display" aria-hidden="true"></i></span>
+            <span class="device-name">Computer</span>
+            <span class="device-detail">Desktop workspace</span>
+          </button>
+
+          <button class="device-card tablet-card" type="button" data-device="Tablet" role="listitem">
+            <span class="device-icon"><i class="fa-solid fa-tablet-screen-button" aria-hidden="true"></i></span>
+            <span class="device-name">Tablet</span>
+            <span class="device-detail">Touch optimized</span>
+          </button>
+
+          <button class="device-card phone-card" type="button" data-device="Phone" role="listitem">
+            <span class="device-icon"><i class="fa-solid fa-mobile-screen-button" aria-hidden="true"></i></span>
+            <span class="device-name">Phone</span>
+            <span class="device-detail">Compact control</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section id="desktopStage" class="stage desktop-stage" aria-label="WizOS desktop" aria-hidden="true">
+      <header class="status-bar glass-bar">
+        <div class="system-mode">
+          <span class="pulse-dot" aria-hidden="true"></span>
+          <span id="systemMode">WizOS - Computer Mode</span>
+        </div>
+        <time id="clockDisplay" class="clock-display" datetime="">--:--:-- --</time>
+        <div class="status-icons" aria-label="System status">
+          <i class="fa-solid fa-wifi" title="Wi-Fi connected" aria-label="Wi-Fi connected"></i>
+          <i class="fa-solid fa-battery-three-quarters" title="Battery charged" aria-label="Battery charged"></i>
+        </div>
+      </header>
+
+      <div class="workspace" id="workspace" aria-label="Application shortcuts">
+        <button class="app-shortcut app-clock" type="button" data-app="clock">
+          <span class="shortcut-orb"><i class="fa-solid fa-clock" aria-hidden="true"></i></span>
+          <span>Clock</span>
+        </button>
+        <button class="app-shortcut app-video" type="button" data-app="video">
+          <span class="shortcut-orb"><i class="fa-solid fa-video" aria-hidden="true"></i></span>
+          <span>Video Maker</span>
+        </button>
+        <button class="app-shortcut app-audio" type="button" data-app="audio">
+          <span class="shortcut-orb"><i class="fa-solid fa-music" aria-hidden="true"></i></span>
+          <span>Audio Maker</span>
+        </button>
+        <button class="app-shortcut app-ai" type="button" data-app="ai">
+          <span class="shortcut-orb"><i class="fa-solid fa-brain" aria-hidden="true"></i></span>
+          <span>AI Assistant</span>
+        </button>
+      </div>
+
+      <div id="windowLayer" class="window-layer" aria-live="polite"></div>
+
+      <nav class="dock glass-bar" aria-label="System dock">
+        <button class="dock-btn app-clock" type="button" data-app="clock" aria-label="Open Clock">
+          <i class="fa-solid fa-clock" aria-hidden="true"></i>
+        </button>
+        <button class="dock-btn app-video" type="button" data-app="video" aria-label="Open Video Maker">
+          <i class="fa-solid fa-video" aria-hidden="true"></i>
+        </button>
+        <button class="dock-btn app-audio" type="button" data-app="audio" aria-label="Open Audio Maker">
+          <i class="fa-solid fa-music" aria-hidden="true"></i>
+        </button>
+        <button class="dock-btn app-ai" type="button" data-app="ai" aria-label="Open AI Assistant">
+          <i class="fa-solid fa-brain" aria-hidden="true"></i>
+        </button>
+        <span class="dock-divider" aria-hidden="true"></span>
+        <button id="powerButton" class="dock-btn power-btn" type="button" aria-label="Power off and return to device selection">
+          <i class="fa-solid fa-power-off" aria-hidden="true"></i>
+        </button>
+      </nav>
+    </section>
+  </main>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
