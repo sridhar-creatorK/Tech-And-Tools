@@ -20,7 +20,38 @@
   <div class="ambient ambient-three" aria-hidden="true"></div>
 
   <main id="app" class="shell" aria-live="polite">
-    <section id="deviceStage" class="stage device-stage is-active" aria-labelledby="deviceTitle">
+    <section id="landingStage" class="stage landing-stage is-active" aria-labelledby="landingTitle">
+      <div class="landing-hero glass-card">
+        <p class="eyebrow">Tech And Tools flagship suite</p>
+        <h1 id="landingTitle" class="landing-title">Tech Tool Wiz</h1>
+        <p class="landing-tagline">Your smart hub for everyday tech tools.</p>
+        <button id="getStartedBtn" class="get-started-btn" type="button">
+          <span>Get Started</span>
+          <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+        </button>
+
+        <div class="module-preview-grid" aria-label="Core module preview">
+          <article class="module-preview app-clock">
+            <span class="preview-orb"><i class="fa-solid fa-clock" aria-hidden="true"></i></span>
+            <span>Clock</span>
+          </article>
+          <article class="module-preview app-video">
+            <span class="preview-orb"><i class="fa-solid fa-video" aria-hidden="true"></i></span>
+            <span>Video Maker</span>
+          </article>
+          <article class="module-preview app-audio">
+            <span class="preview-orb"><i class="fa-solid fa-music" aria-hidden="true"></i></span>
+            <span>Audio Maker</span>
+          </article>
+          <article class="module-preview app-ai">
+            <span class="preview-orb"><i class="fa-solid fa-brain" aria-hidden="true"></i></span>
+            <span>AI Assistant</span>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="deviceStage" class="stage device-stage" aria-labelledby="deviceTitle" aria-hidden="true">
       <div class="hero-panel glass-card">
         <p class="eyebrow">Tech And Tools presents WizOS</p>
         <h1 id="deviceTitle">Select Your Device to Continue</h1>
@@ -98,7 +129,7 @@
           <i class="fa-solid fa-brain" aria-hidden="true"></i>
         </button>
         <span class="dock-divider" aria-hidden="true"></span>
-        <button id="powerButton" class="dock-btn power-btn" type="button" aria-label="Power off and return to device selection">
+        <button id="powerButton" class="dock-btn power-btn" type="button" aria-label="Power off and return to landing page">
           <i class="fa-solid fa-power-off" aria-hidden="true"></i>
         </button>
       </nav>

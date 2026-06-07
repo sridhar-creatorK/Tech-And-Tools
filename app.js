@@ -1,9 +1,11 @@
+const landingStage = document.querySelector('#landingStage');
 const deviceStage = document.querySelector('#deviceStage');
 const desktopStage = document.querySelector('#desktopStage');
 const systemMode = document.querySelector('#systemMode');
 const clockDisplay = document.querySelector('#clockDisplay');
 const windowLayer = document.querySelector('#windowLayer');
 const powerButton = document.querySelector('#powerButton');
+const getStartedBtn = document.querySelector('#getStartedBtn');
 
 const appRegistry = {
   clock: {
@@ -89,10 +91,22 @@ const appRegistry = {
 let windowOffset = 0;
 let activeDevice = 'Computer';
 
-function switchStage(showDesktop) {
-  deviceStage.classList.toggle('is-active', !showDesktop);
-  desktopStage.classList.toggle('is-active', showDesktop);
-  desktopStage.setAttribute('aria-hidden', String(!showDesktop));
+function switchStage(stageName) {
+  const stages = {
+    landing: landingStage,
+    device: deviceStage,
+    desktop: desktopStage,
+  };
+
+  Object.entries(stages).forEach(([name, stage]) => {
+    const isActive = name === stageName;
+    stage.classList.toggle('is-active', isActive);
+    stage.setAttribute('aria-hidden', String(!isActive));
+  });
+}
+
+function showDeviceSelection() {
+  switchStage('device');
 }
 
 function updateClock() {
@@ -113,13 +127,13 @@ function updateClock() {
 function launchDesktop(device) {
   activeDevice = device;
   systemMode.textContent = `WizOS - ${device} Mode`;
-  switchStage(true);
+  switchStage('desktop');
 }
 
 function resetSystem() {
   windowLayer.innerHTML = '';
   windowOffset = 0;
-  switchStage(false);
+  switchStage('landing');
 }
 
 function openApp(appKey) {
@@ -219,6 +233,8 @@ function createAssistantReply(message) {
   }
   return 'I captured that. This local shell can be upgraded with model-backed intelligence, tool calls, memory, and media generation workflows.';
 }
+
+getStartedBtn.addEventListener('click', showDeviceSelection);
 
 document.querySelectorAll('[data-device]').forEach((button) => {
   button.addEventListener('click', () => launchDesktop(button.dataset.device));
