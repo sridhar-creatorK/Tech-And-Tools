@@ -334,20 +334,51 @@ function renderTaskSwitcher() {
     const app = appRegistry[appKey];
     const currentClass = appKey === currentAppKey ? ' is-current' : '';
     return `
-      <button class="stack-card${currentClass}" type="button" data-stack-app="${appKey}">
+      <article class="stack-card${currentClass}" data-stack-app="${appKey}" role="button" tabindex="0" aria-label="Switch to ${app.title}">
         <span class="stack-card-icon ${app.theme}"><i class="${app.icon}" aria-hidden="true"></i></span>
         <span><strong>${app.title}</strong><small>${app.subtitle}</small></span>
-        <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
-      </button>
+        <button class="terminate-app-btn" type="button" data-terminate-app="${appKey}" aria-label="Close ${app.title}">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </article>
     `;
   }).join('');
 
-  taskStackList.querySelectorAll('[data-stack-app]').forEach((button) => {
-    button.addEventListener('click', () => {
-      openApp(button.dataset.stackApp);
+  taskStackList.querySelectorAll('[data-stack-app]').forEach((card) => {
+    card.addEventListener('click', () => {
+      openApp(card.dataset.stackApp);
+      closeTaskSwitcher();
+    });
+    card.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      openApp(card.dataset.stackApp);
       closeTaskSwitcher();
     });
   });
+
+  taskStackList.querySelectorAll('[data-terminate-app]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.stopPropagation();
+      terminateApp(button.dataset.terminateApp);
+    });
+  });
+}
+
+function terminateApp(appKey) {
+  runningApps.delete(appKey);
+
+  for (let index = appHistory.length - 1; index >= 0; index -= 1) {
+    if (appHistory[index] === appKey) {
+      appHistory.splice(index, 1);
+    }
+  }
+
+  if (currentAppKey === appKey) {
+    closeActiveSheet();
+  }
+
+  renderTaskSwitcher();
 }
 
 function hydrateAppSheet(appKey) {
