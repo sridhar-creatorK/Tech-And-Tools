@@ -102,7 +102,7 @@ button {
   visibility: hidden;
   pointer-events: none;
   transform: translateY(18px) scale(0.985);
-  transition: opacity 620ms var(--ease), transform 620ms var(--ease), visibility 620ms var(--ease);
+  transition: opacity 620ms var(--ease), transform 620ms var(--ease);
 }
 
 .stage.is-active {
@@ -213,7 +213,7 @@ button {
   box-shadow: 0 16px 46px rgba(255, 255, 255, 0.18), 0 18px 56px rgba(76, 29, 149, 0.22);
   font-weight: 900;
   letter-spacing: -0.01em;
-  transition: transform 300ms var(--ease), box-shadow 300ms var(--ease), border-color 300ms var(--ease);
+  transition: transform 300ms var(--ease), opacity 300ms var(--ease);
   backdrop-filter: blur(18px) saturate(170%);
   -webkit-backdrop-filter: blur(18px) saturate(170%);
 }
@@ -221,8 +221,7 @@ button {
 .get-started-btn:hover,
 .get-started-btn:focus-visible {
   transform: translateY(-5px) scale(1.055);
-  border-color: rgba(255, 255, 255, 0.98);
-  box-shadow: 0 0 34px rgba(244, 114, 182, 0.34), 0 26px 76px rgba(251, 146, 60, 0.23);
+  opacity: 0.96;
   outline: none;
 }
 
@@ -431,7 +430,7 @@ h1 {
   color: var(--text);
   background: rgba(255, 255, 255, 0.1);
   box-shadow: 0 18px 45px rgba(0, 0, 0, 0.24);
-  transition: transform 360ms var(--ease), border-color 360ms var(--ease), box-shadow 360ms var(--ease);
+  transition: transform 360ms var(--ease), opacity 360ms var(--ease);
 }
 
 .device-card::before {
@@ -458,8 +457,7 @@ h1 {
 .device-card:hover,
 .device-card:focus-visible {
   transform: translateY(-12px) scale(1.025);
-  border-color: rgba(255, 255, 255, 0.56);
-  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.36);
+  opacity: 0.96;
   outline: none;
 }
 
@@ -571,13 +569,13 @@ h1 {
   color: var(--text);
   background: transparent;
   box-shadow: none;
-  transition: transform 260ms var(--ease), filter 260ms var(--ease);
+  transition: transform 260ms var(--ease), opacity 260ms var(--ease);
 }
 
 .launcher-tile:hover,
 .launcher-tile:focus-visible {
   transform: translateY(-8px) scale(1.045);
-  filter: brightness(1.08);
+  opacity: 0.94;
   outline: none;
 }
 
@@ -774,13 +772,13 @@ h1 {
 }
 
 .soft-key {
-  transition: transform 200ms var(--ease), background 200ms var(--ease);
+  transition: transform 200ms var(--ease), opacity 200ms var(--ease);
 }
 
 .soft-key:hover,
 .soft-key:focus-visible {
   transform: translateY(-3px);
-  background: rgba(255, 255, 255, 0.18);
+  opacity: 0.92;
   outline: none;
 }
 
@@ -889,15 +887,14 @@ h1 {
   color: var(--text);
   background: rgba(255, 255, 255, 0.12);
   font-weight: 850;
-  transition: transform 220ms var(--ease), background 220ms var(--ease), border-color 220ms var(--ease);
+  transition: transform 220ms var(--ease), opacity 220ms var(--ease);
 }
 
 .system-nav-btn:hover,
 .system-nav-btn:focus-visible,
 .system-nav-btn.is-active {
   transform: translateY(-4px);
-  border-color: rgba(255, 255, 255, 0.38);
-  background: rgba(255, 255, 255, 0.2);
+  opacity: 0.94;
   outline: none;
 }
 
@@ -921,7 +918,7 @@ h1 {
   visibility: hidden;
   pointer-events: none;
   transform: translateX(calc(100% + 1.5rem));
-  transition: opacity 360ms var(--ease), visibility 360ms var(--ease), transform 420ms var(--ease);
+  transition: opacity 360ms var(--ease), transform 420ms var(--ease);
 }
 
 .task-switcher.is-open {
@@ -974,15 +971,14 @@ h1 {
   color: var(--text);
   background: rgba(255, 255, 255, 0.1);
   text-align: left;
-  transition: transform 220ms var(--ease), background 220ms var(--ease), border-color 220ms var(--ease);
+  transition: transform 220ms var(--ease), opacity 220ms var(--ease);
 }
 
 .stack-card:hover,
 .stack-card:focus-visible,
 .stack-card.is-current {
   transform: translateX(-4px);
-  border-color: rgba(255, 255, 255, 0.36);
-  background: rgba(255, 255, 255, 0.17);
+  opacity: 0.94;
   outline: none;
 }
 
@@ -1004,7 +1000,7 @@ h1 {
   background: rgba(255, 255, 255, 0.08);
   font-size: 1rem;
   line-height: 1;
-  transition: transform 200ms var(--ease), color 200ms var(--ease), background 200ms var(--ease), border-color 200ms var(--ease);
+  transition: transform 200ms var(--ease), opacity 200ms var(--ease);
 }
 
 .terminate-app-btn:hover,
@@ -1013,6 +1009,7 @@ h1 {
   color: #fff;
   border-color: rgba(248, 113, 113, 0.62);
   background: rgba(239, 68, 68, 0.82);
+  opacity: 0.96;
   outline: none;
 }
 
@@ -1059,7 +1056,6 @@ h1 {
     overflow-y: auto;
   }
 
-  .launcher-grid,
   .tools-preview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1103,13 +1099,8 @@ h1 {
     padding-top: 6rem;
   }
 
-  .launcher-grid,
   .tools-preview-grid {
     grid-template-columns: 1fr;
-  }
-
-  .launcher-tile {
-    min-height: 124px;
   }
 
   .task-switcher {
@@ -1124,6 +1115,61 @@ h1 {
 
   .task-switcher.is-open {
     transform: translateY(0);
+  }
+}
+
+@media (max-width: 768px) {
+  body {
+    overflow: hidden;
+  }
+
+  .desktop-stage {
+    overflow: hidden;
+    padding: 5.35rem 0.85rem 5.55rem;
+  }
+
+  .status-bar {
+    position: fixed;
+    top: 0.75rem;
+    width: calc(100% - 1rem);
+  }
+
+  .launcher-shell {
+    max-height: calc(100dvh - 10.9rem);
+    overflow-y: auto;
+    align-items: start;
+    padding: 0.1rem 0.25rem 0.9rem;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+
+  .launcher-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    align-content: start;
+    justify-items: center;
+  }
+
+  .launcher-tile {
+    width: 100%;
+    min-height: 88px;
+    gap: 0.45rem;
+  }
+
+  .launcher-orb {
+    width: 60px;
+    height: 60px;
+    border-radius: 18px;
+    font-size: 1.45rem;
+  }
+
+  .launcher-name {
+    font-size: 0.85rem;
+  }
+
+  .system-nav {
+    position: fixed;
+    bottom: 0.75rem;
   }
 }
 
