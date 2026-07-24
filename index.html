@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="WizOS - a polished glassmorphic web operating system for everyday tech tools." />
+  <title>WizOS | Tech And Tools</title>
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" />
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css"
+    crossorigin="anonymous"
+    referrerpolicy="no-referrer"
+  />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="ambient ambient-one" aria-hidden="true"></div>
+  <div class="ambient ambient-two" aria-hidden="true"></div>
+  <div class="ambient ambient-three" aria-hidden="true"></div>
+
+  <main id="app" class="shell" aria-live="polite">
+    <section id="landingStage" class="stage landing-stage is-active" aria-labelledby="landingTitle">
+      <div class="landing-shell">
+        <div class="landing-hero glass-card">
+          <p class="eyebrow">Tech And Tools flagship system</p>
+          <h1 id="landingTitle" class="landing-title">WizOS</h1>
+          <p class="landing-tagline">Your smart hub for everyday tech tools.</p>
+          <button id="getStartedBtn" class="get-started-btn" type="button" aria-label="Get started with WizOS">
+            <span>Get Started</span>
+            <i class="fa-solid fa-arrow-right" aria-hidden="true"></i>
+          </button>
+
+          <div class="module-preview-row" aria-label="WizOS quick-access previews">
+            <article class="module-preview preview-calculator">
+              <span class="preview-orb"><i class="fa-solid fa-calculator" aria-hidden="true"></i></span>
+              <span>Calculator</span>
+            </article>
+            <article class="module-preview preview-converter">
+              <span class="preview-orb"><i class="fa-solid fa-right-left" aria-hidden="true"></i></span>
+              <span>Converter</span>
+            </article>
+            <article class="module-preview preview-notepad">
+              <span class="preview-orb"><i class="fa-solid fa-note-sticky" aria-hidden="true"></i></span>
+              <span>Notepad</span>
+            </article>
+            <article class="module-preview preview-clock">
+              <span class="preview-orb"><i class="fa-solid fa-clock" aria-hidden="true"></i></span>
+              <span>Clock</span>
+            </article>
+          </div>
+        </div>
+
+        <section class="tools-preview-section glass-card" aria-labelledby="toolsPreviewTitle">
+          <div class="tools-preview-heading">
+            <p class="eyebrow">Explore WizOS Tools</p>
+            <h2 id="toolsPreviewTitle">Explore Our Tools</h2>
+          </div>
+          <div class="tools-preview-grid">
+            <article class="tool-preview-card">
+              <span class="tool-card-icon preview-calculator"><i class="fa-solid fa-calculator" aria-hidden="true"></i></span>
+              <div>
+                <h3>Calculator</h3>
+                <p>Quick arithmetic &amp; conversions for fast daily problem solving.</p>
+              </div>
+            </article>
+            <article class="tool-preview-card">
+              <span class="tool-card-icon preview-converter"><i class="fa-solid fa-right-left" aria-hidden="true"></i></span>
+              <div>
+                <h3>Converter</h3>
+                <p>Scale units, translate values, and move between formats cleanly.</p>
+              </div>
+            </article>
+            <article class="tool-preview-card">
+              <span class="tool-card-icon preview-notepad"><i class="fa-solid fa-note-sticky" aria-hidden="true"></i></span>
+              <div>
+                <h3>Notepad</h3>
+                <p>Capture text, code notes, checklists, and workspace ideas.</p>
+              </div>
+            </article>
+            <article class="tool-preview-card">
+              <span class="tool-card-icon preview-clock"><i class="fa-solid fa-clock" aria-hidden="true"></i></span>
+              <div>
+                <h3>Clock</h3>
+                <p>Set alarms &amp; timers easily, then track time across your workspace.</p>
+              </div>
+            </article>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section id="deviceStage" class="stage device-stage" aria-labelledby="deviceTitle" aria-hidden="true">
+      <div class="hero-panel glass-card">
+        <p class="eyebrow">WizOS profile setup</p>
+        <h1 id="deviceTitle">Select Your Device to Continue</h1>
+        <p class="hero-copy">
+          Choose your preferred workspace profile and launch a fluid, glass-powered WizOS suite.
+        </p>
+
+        <div class="device-grid" role="list" aria-label="Device choices">
+          <button class="device-card computer-card" type="button" data-device="Computer" role="listitem">
+            <span class="device-icon"><i class="fa-solid fa-display" aria-hidden="true"></i></span>
+            <span class="device-name">Computer</span>
+            <span class="device-detail">Desktop workspace</span>
+          </button>
+
+          <button class="device-card tablet-card" type="button" data-device="Tablet" role="listitem">
+            <span class="device-icon"><i class="fa-solid fa-tablet-screen-button" aria-hidden="true"></i></span>
+            <span class="device-name">Tablet</span>
+            <span class="device-detail">Touch optimized</span>
+          </button>
+
+          <button class="device-card phone-card" type="button" data-device="Phone" role="listitem">
+            <span class="device-icon"><i class="fa-solid fa-mobile-screen-button" aria-hidden="true"></i></span>
+            <span class="device-name">Phone</span>
+            <span class="device-detail">Compact control</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section id="desktopStage" class="stage desktop-stage" aria-label="WizOS launcher" aria-hidden="true">
+      <header class="status-bar glass-bar">
+        <div class="system-mode">
+          <span class="pulse-dot" aria-hidden="true"></span>
+          <span id="systemMode">WizOS - Computer Mode</span>
+        </div>
+        <time id="clockDisplay" class="clock-display" datetime="">--:--:-- --</time>
+        <div class="status-icons" aria-label="System status">
+          <i class="fa-solid fa-wifi" title="Wi-Fi connected" aria-label="Wi-Fi connected"></i>
+          <i class="fa-solid fa-battery-three-quarters" title="Battery charged" aria-label="Battery charged"></i>
+        </div>
+      </header>
+
+      <section class="launcher-shell" aria-label="WizOS tool launcher">
+        <div class="launcher-grid" aria-label="WizOS tool launcher grid">
+          <button class="launcher-tile theme-clock" type="button" data-app="clock">
+            <span class="launcher-orb"><i class="fa-solid fa-clock" aria-hidden="true"></i></span>
+            <span class="launcher-name">Clock</span>
+          </button>
+          <button class="launcher-tile theme-video" type="button" data-app="video">
+            <span class="launcher-orb"><i class="fa-solid fa-film" aria-hidden="true"></i></span>
+            <span class="launcher-name">Video Studio</span>
+          </button>
+          <button class="launcher-tile theme-audio" type="button" data-app="audio">
+            <span class="launcher-orb"><i class="fa-solid fa-microphone-lines" aria-hidden="true"></i></span>
+            <span class="launcher-name">Audio Studio</span>
+          </button>
+          <button class="launcher-tile theme-ai" type="button" data-app="ai">
+            <span class="launcher-orb"><i class="fa-solid fa-brain" aria-hidden="true"></i></span>
+            <span class="launcher-name">AI Assistant</span>
+          </button>
+          <button class="launcher-tile theme-calculator" type="button" data-app="calculator">
+            <span class="launcher-orb"><i class="fa-solid fa-calculator" aria-hidden="true"></i></span>
+            <span class="launcher-name">Calculator</span>
+          </button>
+          <button class="launcher-tile theme-converter" type="button" data-app="converter">
+            <span class="launcher-orb"><i class="fa-solid fa-right-left" aria-hidden="true"></i></span>
+            <span class="launcher-name">Converter</span>
+          </button>
+          <button class="launcher-tile theme-notepad" type="button" data-app="notepad">
+            <span class="launcher-orb"><i class="fa-solid fa-note-sticky" aria-hidden="true"></i></span>
+            <span class="launcher-name">Notepad</span>
+          </button>
+        </div>
+      </section>
+
+      <section id="appSheetLayer" class="app-sheet-layer" aria-live="polite" aria-hidden="true"></section>
+
+      <aside id="taskSwitcher" class="task-switcher glass-card" aria-labelledby="taskSwitcherTitle" aria-hidden="true">
+        <div class="task-switcher-header">
+          <div>
+            <p class="eyebrow">Running utilities</p>
+            <h2 id="taskSwitcherTitle">Stacks</h2>
+          </div>
+          <button id="closeStacksBtn" class="icon-button" type="button" aria-label="Close stacks drawer">
+            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+          </button>
+        </div>
+        <div id="taskStackList" class="task-stack-list" aria-label="Running WizOS apps"></div>
+      </aside>
+
+      <nav class="system-nav glass-bar" aria-label="WizOS operation navigation">
+        <button id="backButton" class="system-nav-btn" type="button" aria-label="Back">
+          <span aria-hidden="true">◀</span>
+          <strong>Back</strong>
+        </button>
+        <button id="homeButton" class="system-nav-btn home-trigger" type="button" aria-label="Home">
+          <span aria-hidden="true">●</span>
+          <strong>Home</strong>
+        </button>
+        <button id="stacksButton" class="system-nav-btn" type="button" aria-label="Stacks">
+          <span aria-hidden="true">☱</span>
+          <strong>Stacks</strong>
+        </button>
+      </nav>
+    </section>
+  </main>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
