@@ -33,78 +33,235 @@ function wireDrop(el, cb, accept) {
 }
 
 /* ---------- Tools ---------- */
-function imageTool(el) {
-  el.innerHTML = `${dropHtml('Drop images here or click to choose (JPG, PNG, WebP, GIF, BMP…)')}
-    <div class="row"><label>Quality <input type="range" min="10" max="100" value="75" data-q /> <b data-qv>75</b>%</label>
-      <select class="select-field" data-fmt aria-label="Output format"><option value="image/jpeg">JPEG</option><option value="image/webp">WebP</option><option value="image/png">PNG (lossless)</option></select>
-      <input class="field" type="number" min="16" data-w placeholder="Max width px" aria-label="Max width" /></div>
-    <div class="list" data-out></div>`;
-  const q = $('[data-q]', el); const fmt = $('[data-fmt]', el); const mw = $('[data-w]', el); const out = $('[data-out]', el);
-  let files = []; let tok = 0;
-  const run = async () => {
-    const t = ++tok; const rows = [];
-    for (const f of files) {
-      try {
-        const bmp = await createImageBitmap(f);
-        const w = +mw.value > 0 ? Math.min(+mw.value, bmp.width) : bmp.width; const h = Math.round((bmp.height * w) / bmp.width);
-        const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(bmp, 0, 0, w, h);
-        const blob = await new Promise((r) => c.toBlob(r, fmt.value, q.value / 100));
-        const ext = fmt.value.split('/')[1].replace('jpeg', 'jpg'); const url = URL.createObjectURL(blob);
-        const pct = Math.round((1 - blob.size / f.size) * 100);
-        rows.push(`<div class="list-row"><img class="thumb" src="${url}" alt="" /><span class="grow">${esc(f.name)}<br /><small>${fmtBytes(f.size)} → ${fmtBytes(blob.size)} (${Math.abs(pct)}% ${pct >= 0 ? 'smaller' : 'larger'}) · ${w}×${h}</small></span><a class="btn primary" download="${esc(f.name.replace(/\.[^.]+$/, ''))}-wiz.${ext}" href="${url}">Save</a></div>`);
-      } catch { rows.push(`<div class="list-row">Could not read ${esc(f.name)}</div>`); }
-    }
-    if (t === tok) out.innerHTML = rows.join('');
-  };
-  wireDrop(el, (fs) => { files = fs.filter((f) => f.type.startsWith('image/')); run(); }, 'image/*');
-  [q, fmt, mw].forEach((c) => c.addEventListener('input', () => { $('[data-qv]', el).textContent = q.value; if (files.length) run(); }));
+/* ---------- Shared media helpers ---------- */
+const PDFLIB = 'https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js';
+const isPdf = (f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name);
+const isHeic = (f) => /hei[cf]$/i.test(f.name) || /hei[cf]/i.test(f.type);
+async function toBitmap(f) {
+  if (isHeic(f)) { await loadScript('https://cdnjs.cloudflare.com/ajax/libs/heic2any/0.0.4/heic2any.min.js'); const r = await window.heic2any({ blob: f, toType: 'image/png' }); f = Array.isArray(r) ? r[0] : r; }
+  return createImageBitmap(f);
 }
-
+async function toCanvas(f) {
+  const b = await toBitmap(f); const c = document.createElement('canvas'); c.width = b.width; c.height = b.height;
+  const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); x.drawImage(b, 0, 0); return c;
+}
+async function pdfjs() {
+  await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'); const L = window.pdfjsLib;
+  L.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; return L;
+}
+const pdfDoc = async (data) => (await pdfjs()).getDocument({ data }).promise;
+async function renderPage(doc, n, scale) {
+  const p = await doc.getPage(n); const v = p.getViewport({ scale }); const c = document.createElement('canvas'); c.width = v.width; c.height = v.height;
+  await p.render({ canvasContext: c.getContext('2d'), viewport: v }).promise; return c;
+}
+const blobOf = (c, type = 'image/png', q) => new Promise((r) => c.toBlob(r, type, q));
 function parseRange(text, n) {
   const idx = [];
   text.split(',').forEach((part) => {
-    const [a, b = a] = part.trim().split('-').map((x) => parseInt(x, 10));
-    if (Number.isNaN(a) || Number.isNaN(b)) return;
+    const [a, b = a] = part.trim().split('-').map((x) => parseInt(x, 10)); if (Number.isNaN(a) || Number.isNaN(b)) return;
     for (let p = Math.max(1, Math.min(a, b)); p <= Math.min(n, Math.max(a, b)); p += 1) if (!idx.includes(p - 1)) idx.push(p - 1);
   });
   return idx;
 }
+function addResult(list, name, blob, note = '', thumbCanvas) {
+  const url = URL.createObjectURL(blob); const row = document.createElement('div'); row.className = 'list-row';
+  row.innerHTML = `${thumbCanvas ? `<img class="thumb" src="${thumbCanvas}" alt="" />` : ''}<span class="grow">${esc(name)}<br /><small>${fmtBytes(blob.size)} ${note}</small></span><a class="btn primary" download="${esc(name)}" href="${url}">Save</a>`;
+  list.append(row);
+}
+const thumbOf = (c) => { const t = document.createElement('canvas'); t.width = 56; t.height = 56; t.getContext('2d').drawImage(c, 0, 0, 56, 56); return t.toDataURL(); };
 
-function pdfTool(el) {
-  el.innerHTML = `<div class="tabs"><button class="tab is-on" data-m="merge">Merge</button><button class="tab" data-m="split">Split / Extract</button></div>
-    ${dropHtml('Drop PDF files here or click to choose')}<div class="list" data-files></div>
-    <div class="row" data-splitrow hidden><input class="field grow" data-range placeholder="Pages to extract, e.g. 1-3, 5, 8-10" /></div>
-    <div class="row"><button class="btn primary" data-go>Merge PDFs</button><span class="hint" data-msg></span></div>`;
-  let mode = 'merge'; let files = [];
-  const msg = (t) => { $('[data-msg]', el).textContent = t; };
-  const paint = () => { $('[data-files]', el).innerHTML = files.map((f, i) => `<div class="list-row"><span class="grow">${esc(f.name)} <small>${fmtBytes(f.size)}</small></span><button class="chip" data-up="${i}" aria-label="Move up">↑</button><button class="chip" data-rm="${i}" aria-label="Remove">✕</button></div>`).join(''); };
-  $$('[data-m]', el).forEach((t) => t.addEventListener('click', () => {
-    mode = t.dataset.m; $$('[data-m]', el).forEach((x) => x.classList.toggle('is-on', x === t));
-    if (mode === 'split') files = files.slice(0, 1);
-    $('[data-splitrow]', el).hidden = mode !== 'split'; $('[data-go]', el).textContent = mode === 'merge' ? 'Merge PDFs' : 'Extract pages'; msg(''); paint();
-  }));
-  $('[data-files]', el).addEventListener('click', (e) => {
-    const up = e.target.closest('[data-up]'); const rm = e.target.closest('[data-rm]');
-    if (up && +up.dataset.up > 0) { const i = +up.dataset.up; [files[i - 1], files[i]] = [files[i], files[i - 1]]; }
-    if (rm) files.splice(+rm.dataset.rm, 1);
-    paint();
-  });
-  wireDrop(el, (fs) => { const pdfs = fs.filter((f) => /pdf$/i.test(f.type) || /\.pdf$/i.test(f.name)); files = mode === 'split' ? pdfs.slice(0, 1) : [...files, ...pdfs]; paint(); }, 'application/pdf');
-  $('[data-go]', el).addEventListener('click', async () => {
+/* ffmpeg.wasm (video/audio + rare image formats), loaded on first use */
+let ffP = null;
+function getFF() {
+  return (ffP ||= (async () => {
+    const { FFmpeg } = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/+esm');
+    const { toBlobURL, fetchFile } = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/+esm');
+    const ff = new FFmpeg(); const core = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+    await ff.load({ coreURL: await toBlobURL(`${core}/ffmpeg-core.js`, 'text/javascript'), wasmURL: await toBlobURL(`${core}/ffmpeg-core.wasm`, 'application/wasm'), classWorkerURL: await toBlobURL('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js', 'text/javascript') });
+    return { ff, fetchFile };
+  })().catch((e) => { ffP = null; throw new Error(`Could not load the converter (needs internet): ${e.message}`); }));
+}
+async function ffRun(file, args, outName, onP) {
+  const { ff, fetchFile } = await getFF(); const inn = `in.${(file.name.split('.').pop() || 'bin').replace(/\W/g, '')}`;
+  await ff.writeFile(inn, await fetchFile(file)); const h = ({ progress }) => onP?.(Math.min(1, Math.max(0, progress))); ff.on('progress', h);
+  try { await ff.exec(['-i', inn, ...args, outName]); const d = await ff.readFile(outName); return new Blob([d.buffer]); } finally { ff.off('progress', h); try { await ff.deleteFile(inn); await ff.deleteFile(outName); } catch { /* ignore */ } }
+}
+function bmpBlob(c) {
+  const w = c.width; const h = c.height; const d = c.getContext('2d').getImageData(0, 0, w, h).data; const rs = w * 4; const buf = new ArrayBuffer(54 + rs * h); const v = new DataView(buf); const u = new Uint8Array(buf);
+  v.setUint16(0, 0x4d42, true); v.setUint32(2, 54 + rs * h, true); v.setUint32(10, 54, true); v.setUint32(14, 40, true); v.setInt32(18, w, true); v.setInt32(22, h, true); v.setUint16(26, 1, true); v.setUint16(28, 32, true); v.setUint32(34, rs * h, true);
+  for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) { const s = ((h - 1 - y) * w + x) * 4; const o = 54 + y * rs + x * 4; u[o] = d[s + 2]; u[o + 1] = d[s + 1]; u[o + 2] = d[s]; u[o + 3] = d[s + 3]; }
+  return new Blob([buf], { type: 'image/bmp' });
+}
+async function icoBlob(c) {
+  const s = Math.min(256, Math.max(c.width, c.height)); const t = document.createElement('canvas'); t.width = s; t.height = s; const r = Math.min(s / c.width, s / c.height);
+  t.getContext('2d').drawImage(c, (s - c.width * r) / 2, (s - c.height * r) / 2, c.width * r, c.height * r);
+  const png = new Uint8Array(await (await blobOf(t)).arrayBuffer()); const b = new Uint8Array(22 + png.length); const v = new DataView(b.buffer);
+  v.setUint16(2, 1, true); v.setUint16(4, 1, true); b[6] = s >= 256 ? 0 : s; b[7] = b[6]; v.setUint16(10, 1, true); v.setUint16(12, 32, true); v.setUint32(14, png.length, true); v.setUint32(18, 22, true); b.set(png, 22);
+  return new Blob([b], { type: 'image/x-icon' });
+}
+async function encodeImg(c, fmt, qual) {
+  if (fmt === 'jpg') return blobOf(c, 'image/jpeg', qual); if (fmt === 'webp') return blobOf(c, 'image/webp', qual); if (fmt === 'png') return blobOf(c);
+  if (fmt === 'bmp') return bmpBlob(c); if (fmt === 'ico') return icoBlob(c);
+  if (fmt === 'pdf') { await loadScript(PDFLIB); const { PDFDocument } = window.PDFLib; const d = await PDFDocument.create(); const im = await d.embedPng(await (await blobOf(c)).arrayBuffer()); d.addPage([c.width, c.height]).drawImage(im, { x: 0, y: 0, width: c.width, height: c.height }); return new Blob([await d.save()], { type: 'application/pdf' }); }
+  return ffRun(new File([await blobOf(c)], 'x.png'), [], `out.${fmt}`);
+}
+
+/* ---------- Media Converter ---------- */
+function mediaTool(el) {
+  const IMG = { jpg: 'JPG', png: 'PNG', webp: 'WebP', bmp: 'BMP', ico: 'ICO (icon)', pdf: 'PDF', gif: 'GIF', tiff: 'TIFF', tga: 'TGA', ppm: 'PPM' };
+  const VID = { mp4: ['MP4 (H.264)', ['-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-movflags', '+faststart'], 'v'], webm: ['WebM (VP8)', ['-c:v', 'libvpx', '-b:v', '2M', '-c:a', 'libvorbis'], 'v'], mkv: ['MKV', ['-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'aac'], 'v'], mov: ['MOV', ['-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac'], 'v'], avi: ['AVI', ['-c:v', 'mpeg4', '-q:v', '5', '-c:a', 'libmp3lame'], 'v'], ogv: ['OGV (Theora)', ['-c:v', 'libtheora', '-q:v', '6', '-c:a', 'libvorbis'], 'v'], gif: ['Animated GIF', [], 'v'], mp3: ['MP3 audio', ['-vn', '-c:a', 'libmp3lame', '-q:a', '2'], 'a'], wav: ['WAV audio', ['-vn'], 'a'], ogg: ['OGG audio', ['-vn', '-c:a', 'libvorbis'], 'a'], m4a: ['M4A (AAC) audio', ['-vn', '-c:a', 'aac'], 'a'], flac: ['FLAC audio', ['-vn', '-c:a', 'flac'], 'a'] };
+  const opts = (o) => Object.entries(o).map(([k, v]) => `<option value="${k}">${Array.isArray(v) ? v[0] : v}</option>`).join('');
+  el.innerHTML = `<div class="tabs"><button class="tab is-on" data-m="img"><i class="fa-solid fa-image"></i> Images</button><button class="tab" data-m="vid"><i class="fa-solid fa-film"></i> Video &amp; audio</button></div>
+  <section data-p="img" class="stack-gap">${dropHtml('Drop images (JPG, PNG, WebP, GIF, BMP, HEIC…)')}
+    <div class="opt-grid"><label>Convert to <select class="select-field" data-f>${opts(IMG)}</select></label><label>Quality <input type="range" min="10" max="100" value="85" data-q /></label>
+    <label>Width px <input class="field" type="number" min="1" data-w placeholder="auto" /></label><label>Height px <input class="field" type="number" min="1" data-h placeholder="auto" /></label>
+    <label>Crop to ratio <select class="select-field" data-crop><option value="">None</option><option>1:1</option><option>4:3</option><option>3:2</option><option>16:9</option><option>9:16</option><option>4:5</option></select></label>
+    <label>Rotate <select class="select-field" data-rot><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>
+    <label>Effect <select class="select-field" data-fx><option value="">None</option><option value="grayscale(1)">Black &amp; white</option><option value="sepia(1)">Sepia</option><option value="invert(1)">Invert</option><option value="blur(3px)">Blur</option></select></label>
+    <label>Brightness <input type="range" min="50" max="150" value="100" data-br /></label><label>Contrast <input type="range" min="50" max="150" value="100" data-ct /></label>
+    <label class="chip"><input type="checkbox" data-fh /> Flip ↔</label><label class="chip"><input type="checkbox" data-fv /> Flip ↕</label></div>
+    <div class="row"><button class="btn primary" data-ic>Convert</button><span class="hint" data-imsg></span></div><div class="list" data-iout></div></section>
+  <section data-p="vid" class="stack-gap" hidden>${dropHtml('Drop a video or audio file (MP4, MOV, MKV, AVI, WebM, MP3…)')}<p class="hint" data-vname>No file chosen.</p>
+    <div class="opt-grid"><label>Convert to <select class="select-field" data-vf>${opts(VID)}</select></label>
+    <label>Quality <select class="select-field" data-vq><option value="20">High</option><option value="24" selected>Balanced</option><option value="30">Smallest</option></select></label>
+    <label>Resolution <select class="select-field" data-vr><option value="">Original</option><option value="1080">1080p</option><option value="720">720p</option><option value="480">480p</option><option value="360">360p</option></select></label>
+    <label>Start (sec) <input class="field" type="number" min="0" data-vs /></label><label>End (sec) <input class="field" type="number" min="0" data-ve /></label><label class="chip"><input type="checkbox" data-vm /> Mute</label></div>
+    <div class="row"><button class="btn primary" data-vgo>Convert</button><span class="hint" data-vmsg>Runs on your device. The first use downloads the converter (~30 MB); large videos take a while.</span></div>
+    <div class="progress-rail"><span class="progress-fill" data-vbar style="--progress:0%"></span></div><div class="list" data-vout></div></section>`;
+  $$('[data-m]', el).forEach((t) => t.addEventListener('click', () => { $$('[data-m]', el).forEach((x) => x.classList.toggle('is-on', x === t)); $$('[data-p]', el).forEach((p) => { p.hidden = p.dataset.p !== t.dataset.m; }); }));
+  const q = (s) => $(s, el); let files = []; let tok = 0;
+  const runImg = async () => {
+    const t = ++tok; const out = q('[data-iout]'); out.innerHTML = ''; if (!files.length) return q('[data-imsg]').textContent = 'Add images first.';
+    q('[data-imsg]').textContent = 'Converting…'; const fmt = q('[data-f]').value;
+    for (const f of files) {
+      try {
+        const bmp = await toBitmap(f); let sw = bmp.width; let sh = bmp.height; let sx = 0; let sy = 0; const cr = q('[data-crop]').value;
+        if (cr) { const [a, b] = cr.split(':').map(Number); const r = a / b; if (sw / sh > r) { const nw = sh * r; sx = (sw - nw) / 2; sw = nw; } else { const nh = sw / r; sy = (sh - nh) / 2; sh = nh; } }
+        let w = +q('[data-w]').value || 0; let h = +q('[data-h]').value || 0;
+        if (w && !h) h = Math.round((sh * w) / sw); else if (h && !w) w = Math.round((sw * h) / sh); else if (!w) { w = Math.round(sw); h = Math.round(sh); }
+        const rot = +q('[data-rot]').value; const swap = rot % 180; const c = document.createElement('canvas'); c.width = swap ? h : w; c.height = swap ? w : h; const x = c.getContext('2d');
+        if (fmt === 'jpg' || fmt === 'ppm') { x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height); }
+        x.filter = `${q('[data-fx]').value} brightness(${q('[data-br]').value}%) contrast(${q('[data-ct]').value}%)`.trim();
+        x.translate(c.width / 2, c.height / 2); x.rotate((rot * Math.PI) / 180); x.scale(q('[data-fh]').checked ? -1 : 1, q('[data-fv]').checked ? -1 : 1);
+        x.drawImage(bmp, sx, sy, sw, sh, -w / 2, -h / 2, w, h);
+        const blob = await encodeImg(c, fmt, q('[data-q]').value / 100); if (t !== tok) return;
+        addResult(out, `${f.name.replace(/\.[^.]+$/, '')}.${fmt}`, blob, `· from ${fmtBytes(f.size)} · ${c.width}×${c.height}`, thumbOf(c));
+      } catch (e) { out.insertAdjacentHTML('beforeend', `<div class="list-row">Could not convert ${esc(f.name)}: ${esc(e.message)}</div>`); }
+    }
+    q('[data-imsg]').textContent = 'Done.';
+  };
+  wireDrop($('[data-p="img"]', el), (fs) => { files = fs.filter((f) => f.type.startsWith('image/') || isHeic(f)); q('[data-imsg]').textContent = `${files.length} image(s) ready — press Convert.`; }, 'image/*,.heic,.heif');
+  q('[data-ic]').addEventListener('click', runImg);
+  let vfile = null; const vmsg = (t) => { q('[data-vmsg]').textContent = t; };
+  wireDrop($('[data-p="vid"]', el), (fs) => { vfile = fs[0] || null; q('[data-vname]').textContent = vfile ? `${vfile.name} · ${fmtBytes(vfile.size)}` : 'No file chosen.'; }, 'video/*,audio/*');
+  q('[data-vgo]').addEventListener('click', async () => {
+    if (!vfile) return vmsg('Choose a file first.');
+    const fmt = q('[data-vf]').value; const [, base, kind] = VID[fmt]; const args = [...base];
+    if (kind === 'v') {
+      const vf = []; if (fmt === 'gif') vf.push('fps=12'); if (q('[data-vr]').value) vf.push(`scale=-2:${q('[data-vr]').value}`); if (vf.length) args.push('-vf', vf.join(','));
+      if (args.includes('libx264')) args.push('-crf', q('[data-vq]').value); if (q('[data-vm]').checked || fmt === 'gif') args.push('-an');
+    }
+    if (q('[data-vs]').value) args.push('-ss', q('[data-vs]').value); if (q('[data-ve]').value) args.push('-to', q('[data-ve]').value);
     try {
-      if (mode === 'merge' && files.length < 2) return msg('Add at least 2 PDFs.');
-      if (mode === 'split' && !files.length) return msg('Add a PDF first.');
-      msg('Working…'); await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js');
-      const { PDFDocument } = window.PDFLib; const out = await PDFDocument.create();
-      if (mode === 'merge') {
-        for (const f of files) { const s = await PDFDocument.load(await f.arrayBuffer()); (await out.copyPages(s, s.getPageIndices())).forEach((p) => out.addPage(p)); }
-      } else {
-        const s = await PDFDocument.load(await files[0].arrayBuffer()); const idx = parseRange($('[data-range]', el).value, s.getPageCount());
-        if (!idx.length) return msg(`Enter valid pages (1–${s.getPageCount()}).`);
-        (await out.copyPages(s, idx)).forEach((p) => out.addPage(p));
+      vmsg('Loading converter and working…'); q('[data-vout]').innerHTML = '';
+      const blob = await ffRun(vfile, args, `out.${fmt}`, (p) => q('[data-vbar]').style.setProperty('--progress', `${Math.round(p * 100)}%`));
+      q('[data-vbar]').style.setProperty('--progress', '100%'); addResult(q('[data-vout]'), `${vfile.name.replace(/\.[^.]+$/, '')}.${fmt}`, blob); vmsg('Done.');
+    } catch (e) { vmsg(`✗ ${e.message}`); }
+  });
+}
+
+/* ---------- Document Tools ---------- */
+function docTool(el) {
+  const OUT = { pdf: 'Merged PDF', pptx: 'PowerPoint (.pptx)', images: 'Page images (PNG)', compress: 'Compressed PDF' };
+  el.innerHTML = `${dropHtml('Drop PDFs and images — mix as many as you like')}<div class="list" data-files></div>
+    <div class="opt-grid"><label>Output <select class="select-field" data-o>${Object.entries(OUT).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+    <label>Only these pages (optional) <input class="field" data-range placeholder="e.g. 1-3, 5" /></label>
+    <label>Compression <select class="select-field" data-lvl><option value="0">Light</option><option value="1" selected>Balanced</option><option value="2">Maximum</option></select></label></div>
+    <p class="hint">Files are combined in the order shown, then converted to your chosen output. Word, Excel and PowerPoint inputs are coming next.</p>
+    <div class="row"><button class="btn primary" data-go>Create</button><span class="hint" data-msg></span></div><div class="list" data-res></div>`;
+  let files = []; const msg = (t) => { $('[data-msg]', el).textContent = t; };
+  const paint = () => { $('[data-files]', el).innerHTML = files.map((f, i) => `<div class="list-row"><span class="grow">${esc(f.name)} <small>${fmtBytes(f.size)}</small></span><button class="chip" data-up="${i}" aria-label="Move up">↑</button><button class="chip" data-rm="${i}" aria-label="Remove">✕</button></div>`).join(''); };
+  $('[data-files]', el).addEventListener('click', (e) => { const u = e.target.closest('[data-up]'); const r = e.target.closest('[data-rm]'); if (u && +u.dataset.up > 0) { const i = +u.dataset.up; [files[i - 1], files[i]] = [files[i], files[i - 1]]; } if (r) files.splice(+r.dataset.rm, 1); paint(); });
+  wireDrop(el, (fs) => { files = [...files, ...fs.filter((f) => isPdf(f) || f.type.startsWith('image/') || isHeic(f))]; paint(); }, 'application/pdf,image/*,.heic');
+  $('[data-go]', el).addEventListener('click', async () => {
+    if (!files.length) return msg('Add at least one file.'); const res = $('[data-res]', el); res.innerHTML = ''; const kind = $('[data-o]', el).value;
+    try {
+      msg('Working…'); await loadScript(PDFLIB); const { PDFDocument } = window.PDFLib; let out = await PDFDocument.create();
+      for (const f of files) {
+        if (isPdf(f)) { const s = await PDFDocument.load(await f.arrayBuffer()); (await out.copyPages(s, s.getPageIndices())).forEach((p) => out.addPage(p)); } else {
+          const c = await toCanvas(f); const im = await out.embedJpg(await (await blobOf(c, 'image/jpeg', 0.92)).arrayBuffer()); out.addPage([c.width, c.height]).drawImage(im, { x: 0, y: 0, width: c.width, height: c.height });
+        }
       }
-      download(new Blob([await out.save()], { type: 'application/pdf' }), mode === 'merge' ? 'merged.pdf' : 'extracted.pdf'); msg('Done — file downloaded.');
-    } catch (err) { msg(err.message.includes('encrypt') ? 'This PDF is encrypted or damaged.' : err.message); }
+      const range = $('[data-range]', el).value.trim();
+      if (range) { const idx = parseRange(range, out.getPageCount()); if (!idx.length) return msg(`Enter valid pages (1–${out.getPageCount()}).`); const o2 = await PDFDocument.create(); (await o2.copyPages(out, idx)).forEach((p) => o2.addPage(p)); out = o2; }
+      const bytes = await out.save();
+      if (kind === 'pdf') { addResult(res, 'merged.pdf', new Blob([bytes], { type: 'application/pdf' }), `· ${out.getPageCount()} pages`); return msg('Done.'); }
+      const doc = await pdfDoc(bytes.slice()); const n = doc.numPages; const lvl = +$('[data-lvl]', el).value;
+      if (kind === 'images') { for (let i = 1; i <= n; i += 1) { msg(`Rendering page ${i}/${n}…`); const c = await renderPage(doc, i, 2); addResult(res, `page-${i}.png`, await blobOf(c), '', thumbOf(c)); } }
+      if (kind === 'compress') {
+        const [scale, qual] = [[1.8, 0.8], [1.3, 0.62], [1, 0.45]][lvl]; const d = await PDFDocument.create();
+        for (let i = 1; i <= n; i += 1) { msg(`Compressing page ${i}/${n}…`); const c = await renderPage(doc, i, scale); const im = await d.embedJpg(await (await blobOf(c, 'image/jpeg', qual)).arrayBuffer()); d.addPage([c.width / scale, c.height / scale]).drawImage(im, { x: 0, y: 0, width: c.width / scale, height: c.height / scale }); }
+        addResult(res, 'compressed.pdf', new Blob([await d.save()], { type: 'application/pdf' }), `· was ${fmtBytes(bytes.length)} (text becomes images)`);
+      }
+      if (kind === 'pptx') {
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/pptxgenjs/3.12.0/pptxgen.bundle.js'); const p = new window.PptxGenJS(); const first = await renderPage(doc, 1, 1); const H = (10 * first.height) / first.width;
+        p.defineLayout({ name: 'DOC', width: 10, height: H }); p.layout = 'DOC';
+        for (let i = 1; i <= n; i += 1) { msg(`Building slide ${i}/${n}…`); const c = await renderPage(doc, i, 1.6); p.addSlide().addImage({ data: c.toDataURL('image/jpeg', 0.85), x: 0, y: 0, w: 10, h: (10 * c.height) / c.width }); }
+        addResult(res, 'document.pptx', await p.write('blob'), `· ${n} slides`);
+      }
+      msg('Done.');
+    } catch (e) { msg(`✗ ${/encrypt/i.test(e.message) ? 'A PDF is encrypted or damaged.' : e.message}`); }
+  });
+}
+
+/* ---------- Compare ---------- */
+function pixelDiff(ca, cb, th) {
+  const w = ca.width; const h = ca.height; const t = document.createElement('canvas'); t.width = w; t.height = h; const tx = t.getContext('2d'); tx.fillStyle = '#fff'; tx.fillRect(0, 0, w, h); tx.drawImage(cb, 0, 0, w, h);
+  const A = ca.getContext('2d').getImageData(0, 0, w, h).data; const B = tx.getImageData(0, 0, w, h).data; const out = new ImageData(w, h); let n = 0;
+  for (let i = 0; i < A.length; i += 4) {
+    if (Math.max(Math.abs(A[i] - B[i]), Math.abs(A[i + 1] - B[i + 1]), Math.abs(A[i + 2] - B[i + 2])) > th) { out.data.set([255, 30, 90, 255], i); n += 1; } else { const g = ((A[i] + A[i + 1] + A[i + 2]) / 3) * 0.3 + 165; out.data.set([g, g, g, 255], i); }
+  }
+  const dc = document.createElement('canvas'); dc.width = w; dc.height = h; dc.getContext('2d').putImageData(out, 0, 0); return { canvas: dc, pct: (n * 100) / (w * h) };
+}
+function seqDiff(a, b) {
+  const n = a.length; const m = b.length; const W = m + 1; const L = new Uint32Array((n + 1) * W);
+  for (let i = n - 1; i >= 0; i -= 1) for (let j = m - 1; j >= 0; j -= 1) L[i * W + j] = a[i] === b[j] ? L[(i + 1) * W + j + 1] + 1 : Math.max(L[(i + 1) * W + j], L[i * W + j + 1]);
+  const o = []; let i = 0; let j = 0;
+  while (i < n && j < m) { if (a[i] === b[j]) { o.push(['=', a[i]]); i += 1; j += 1; } else if (L[(i + 1) * W + j] >= L[i * W + j + 1]) { o.push(['-', a[i]]); i += 1; } else { o.push(['+', b[j]]); j += 1; } }
+  while (i < n) { o.push(['-', a[i]]); i += 1; } while (j < m) { o.push(['+', b[j]]); j += 1; } return o;
+}
+function compareTool(el) {
+  const ACC = { img: 'image/*,.heic,.dwg,.dxf,.psd,.ai', pdf: 'application/pdf', doc: '.txt,.md,.csv,.json,.html,.docx' };
+  el.innerHTML = `<div class="tabs">${[['img', 'Images & designs'], ['pdf', 'PDF'], ['doc', 'Word / text']].map(([k, l], i) => `<button class="tab ${i ? '' : 'is-on'}" data-m="${k}">${l}</button>`).join('')}</div>
+    <div class="two"><div class="drop" data-pick="a" tabindex="0"><i class="fa-solid fa-file"></i><span>Original file</span><input type="file" hidden /></div><div class="drop" data-pick="b" tabindex="0"><i class="fa-solid fa-file-pen"></i><span>New version</span><input type="file" hidden /></div></div>
+    <div class="row"><label>Sensitivity <input type="range" min="5" max="120" value="30" data-th /></label><button class="btn primary" data-go>Compare</button><span class="hint" data-msg></span></div><div class="stack-gap" data-out></div>`;
+  let mode = 'img'; const file = {}; const msg = (t) => { $('[data-msg]', el).textContent = t; }; const out = $('[data-out]', el);
+  $$('[data-pick]', el).forEach((box) => {
+    const inp = $('input', box); const set = (f) => { if (!f) return; file[box.dataset.pick] = f; $('span', box).textContent = f.name; };
+    box.onclick = () => { inp.accept = ACC[mode]; inp.click(); }; inp.onchange = () => set(inp.files[0]);
+    box.ondragover = (e) => { e.preventDefault(); box.classList.add('over'); }; box.ondragleave = () => box.classList.remove('over'); box.ondrop = (e) => { e.preventDefault(); box.classList.remove('over'); set(e.dataTransfer.files[0]); };
+  });
+  $$('[data-m]', el).forEach((t) => t.addEventListener('click', () => { mode = t.dataset.m; $$('[data-m]', el).forEach((x) => x.classList.toggle('is-on', x === t)); out.innerHTML = ''; msg(''); }));
+  const fig = (c, cap) => { const f = document.createElement('figure'); f.className = 'cmp'; c.className = 'cmp-canvas'; const k = document.createElement('figcaption'); k.textContent = cap; f.append(c, k); return f; };
+  const textOf = async (f) => { if (/\.docx$/i.test(f.name)) { await loadScript('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js'); return (await window.mammoth.extractRawText({ arrayBuffer: await f.arrayBuffer() })).value; } return f.text(); };
+  $('[data-go]', el).addEventListener('click', async () => {
+    if (!file.a || !file.b) return msg('Choose both files.'); out.innerHTML = ''; const th = +$('[data-th]', el).value; msg('Comparing…');
+    try {
+      if (mode === 'img') {
+        if (/\.(dwg|dxf|psd|ai)$/i.test(file.a.name + file.b.name)) return msg('CAD and layered design files (DWG, DXF, PSD, AI) cannot be opened in a browser. Export both as PDF or PNG from your design app, then compare them here.');
+        const a = await toCanvas(file.a); const b = await toCanvas(file.b); const r = pixelDiff(a, b, th); const row = document.createElement('div'); row.className = 'cmp-row'; row.append(fig(a, 'Original'), fig(b, 'New version'), fig(r.canvas, `Differences (red) — ${r.pct.toFixed(2)}% changed`)); out.append(row);
+        msg(r.pct === 0 ? 'No visible difference.' : `${r.pct.toFixed(2)}% of pixels differ.${a.width !== b.width || a.height !== b.height ? ' Sizes differ, so the new version was scaled to match.' : ''}`);
+      } else if (mode === 'pdf') {
+        const da = await pdfDoc(await file.a.arrayBuffer()); const db = await pdfDoc(await file.b.arrayBuffer()); const n = Math.min(da.numPages, db.numPages); let changed = 0;
+        for (let i = 1; i <= n; i += 1) { msg(`Comparing page ${i}/${n}…`); const r = pixelDiff(await renderPage(da, i, 1.2), await renderPage(db, i, 1.2), th); if (r.pct > 0.02) { changed += 1; out.append(fig(r.canvas, `Page ${i} — ${r.pct.toFixed(2)}% changed (red)`)); } }
+        msg(`${changed} of ${n} page(s) changed.${da.numPages !== db.numPages ? ` Page counts differ (${da.numPages} vs ${db.numPages}).` : ''}`);
+      } else {
+        const ta = await textOf(file.a); const tb = await textOf(file.b); let tok = (s) => s.split(/(\s+)/); if ((ta.length + 1) * (tb.length + 1) > 0 && tok(ta).length * tok(tb).length > 6e6) tok = (s) => s.split(/(\n)/);
+        const ops = seqDiff(tok(ta), tok(tb)); let add = 0; let del = 0;
+        const html = ops.map(([t, s]) => (t === '=' ? esc(s) : t === '+' ? (s.trim() ? (add += 1, `<ins style="background:rgba(34,197,94,.5);text-decoration:none;border-radius:3px">${esc(s)}</ins>`) : esc(s)) : (s.trim() ? (del += 1, `<del style="background:rgba(239,68,68,.55);border-radius:3px">${esc(s)}</del>`) : ''))).join('');
+        out.innerHTML = `<div class="panel-card diff-doc">${html}</div>`; msg(`${add} addition(s) in green, ${del} deletion(s) in red.`);
+      }
+    } catch (e) { msg(`✗ ${e.message}`); }
   });
 }
 
@@ -146,88 +303,6 @@ function qrTool(el) {
   fields();
 }
 
-function colorTool(el) {
-  el.innerHTML = `<div class="row"><input type="color" class="colorpick" data-c value="#6366f1" aria-label="Pick colour" /><input class="field" data-hex value="#6366f1" aria-label="Hex" /><button class="btn" data-copy>Copy HEX</button>${window.EyeDropper ? '<button class="btn" data-eye>Pick from screen</button>' : ''}</div><p class="hint" data-fmt></p>${dropHtml('Drop an image to extract its colour palette')}<div class="swatches" data-sw></div>`;
-  const set = (h) => {
-    if (!/^#[0-9a-f]{6}$/i.test(h)) return;
-    $('[data-c]', el).value = h; $('[data-hex]', el).value = h;
-    const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)); const R = r / 255; const G = g / 255; const B = b / 255;
-    const mx = Math.max(R, G, B); const mn = Math.min(R, G, B); const l = (mx + mn) / 2; const d = mx - mn; let hh = 0; let s = 0;
-    if (d) { s = d / (1 - Math.abs(2 * l - 1)); hh = mx === R ? ((G - B) / d) % 6 : mx === G ? (B - R) / d + 2 : (R - G) / d + 4; hh = Math.round(hh * 60 + 360) % 360; }
-    $('[data-fmt]', el).textContent = `RGB(${r}, ${g}, ${b}) · HSL(${hh}, ${Math.round(s * 100)}%, ${Math.round(l * 100)}%)`;
-  };
-  $('[data-c]', el).addEventListener('input', (e) => set(e.target.value)); $('[data-hex]', el).addEventListener('input', (e) => set(e.target.value.trim()));
-  $('[data-copy]', el).addEventListener('click', () => copy($('[data-hex]', el).value));
-  $('[data-eye]', el)?.addEventListener('click', async () => { try { set((await new window.EyeDropper().open()).sRGBHex); } catch { /* cancelled */ } });
-  $('[data-sw]', el).addEventListener('click', (e) => { const b = e.target.closest('[data-h]'); if (b) { set(b.dataset.h); copy(b.dataset.h); } });
-  wireDrop(el, async (fs) => {
-    const f = fs.find((x) => x.type.startsWith('image/')); if (!f) return;
-    const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.drawImage(await createImageBitmap(f), 0, 0, 64, 64);
-    const px = x.getImageData(0, 0, 64, 64).data; const cnt = {};
-    for (let i = 0; i < px.length; i += 4) { if (px[i + 3] < 128) continue; const k = [px[i], px[i + 1], px[i + 2]].map((v) => v >> 5).join(); cnt[k] = (cnt[k] || 0) + 1; }
-    const top = Object.entries(cnt).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k]) => `#${k.split(',').map((v) => ((+v << 5) + 16).toString(16).padStart(2, '0')).join('')}`);
-    $('[data-sw]', el).innerHTML = top.map((h) => `<button class="swatch" style="background:${h}" data-h="${h}">${h}</button>`).join('');
-  }, 'image/*'); set('#6366f1');
-}
-
-function diffTool(el) {
-  el.innerHTML = `<div class="two"><textarea class="textarea-panel small code" data-a placeholder="Original text" aria-label="Original"></textarea><textarea class="textarea-panel small code" data-b placeholder="Changed text" aria-label="Changed"></textarea></div><div class="panel-card diff" data-o><span class="hint">Differences appear here.</span></div>`;
-  const run = () => {
-    const a = $('[data-a]', el).value.split('\n'); const b = $('[data-b]', el).value.split('\n'); const n = a.length; const m = b.length;
-    const L = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
-    for (let i = n - 1; i >= 0; i -= 1) for (let j = m - 1; j >= 0; j -= 1) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
-    let i = 0; let j = 0; let h = '';
-    while (i < n && j < m) { if (a[i] === b[j]) { h += `<div>  ${esc(a[i])}</div>`; i += 1; j += 1; } else if (L[i + 1][j] >= L[i][j + 1]) { h += `<div class="del">− ${esc(a[i])}</div>`; i += 1; } else { h += `<div class="add">+ ${esc(b[j])}</div>`; j += 1; } }
-    while (i < n) { h += `<div class="del">− ${esc(a[i])}</div>`; i += 1; } while (j < m) { h += `<div class="add">+ ${esc(b[j])}</div>`; j += 1; }
-    $('[data-o]', el).innerHTML = h;
-  };
-  $$('textarea', el).forEach((t) => t.addEventListener('input', run));
-}
-
-function regexTool(el) {
-  el.innerHTML = `<div class="row"><input class="field grow code" data-p placeholder="Pattern, e.g. \\d+" aria-label="Pattern" /><input class="field" style="width:5rem" data-f value="g" aria-label="Flags" /></div><textarea class="textarea-panel small" data-t placeholder="Test text…" aria-label="Test text"></textarea><div class="panel-card"><div class="rx-out" data-o></div><p class="hint" data-msg></p></div>`;
-  const run = () => {
-    const p = $('[data-p]', el).value; const t = $('[data-t]', el).value; const msg = $('[data-msg]', el); const o = $('[data-o]', el);
-    if (!p) { o.textContent = t; msg.textContent = ''; return; }
-    try {
-      const fl = $('[data-f]', el).value; const re = new RegExp(p, fl.includes('g') ? fl : `${fl}g`); let last = 0; let html = ''; let n = 0;
-      for (const m of t.matchAll(re)) { html += `${esc(t.slice(last, m.index))}<mark>${esc(m[0])}</mark>`; last = m.index + m[0].length; n += 1; if (n > 2000) break; }
-      o.innerHTML = html + esc(t.slice(last)); msg.textContent = `${n} match${n === 1 ? '' : 'es'}`;
-    } catch (e) { msg.textContent = `✗ ${e.message}`; }
-  };
-  $$('input,textarea', el).forEach((i) => i.addEventListener('input', run));
-}
-
-function cssTool(el) {
-  const rgba = (h, a) => `rgba(${[1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)).join(', ')}, ${a})`;
-  const specs = {
-    Gradient: { f: [['Colour 1', 'color', '#6366f1'], ['Colour 2', 'color', '#ec4899'], ['Angle', 'range', 135, 0, 360]], css: (v) => `background: linear-gradient(${v[2]}deg, ${v[0]}, ${v[1]});` },
-    Shadow: { f: [['X', 'range', 0, -50, 50], ['Y', 'range', 12, -50, 50], ['Blur', 'range', 30, 0, 100], ['Spread', 'range', 0, -30, 30], ['Colour', 'color', '#000000'], ['Opacity %', 'range', 35, 0, 100]], css: (v) => `box-shadow: ${v[0]}px ${v[1]}px ${v[2]}px ${v[3]}px ${rgba(v[4], v[5] / 100)};` },
-    Glass: { f: [['Blur', 'range', 16, 0, 40], ['Opacity %', 'range', 18, 0, 60]], css: (v) => `background: rgba(255, 255, 255, ${v[1] / 100});\nbackdrop-filter: blur(${v[0]}px);\nborder: 1px solid rgba(255, 255, 255, 0.35);` },
-  };
-  el.innerHTML = `<div class="tabs">${Object.keys(specs).map((k, i) => `<button class="tab ${i ? '' : 'is-on'}" data-sp="${k}">${k}</button>`).join('')}</div><div class="css-stage"><div class="css-preview" data-pv></div></div><div class="row" data-ctl></div><pre class="css-out" data-out></pre><div class="row"><button class="btn" data-copy>Copy CSS</button></div>`;
-  let cur = 'Gradient'; let vals = [];
-  const draw = () => { const css = specs[cur].css(vals); $('[data-out]', el).textContent = css; $('[data-pv]', el).style.cssText = css; };
-  const load = (k) => {
-    cur = k; vals = specs[k].f.map((f) => f[2]);
-    $('[data-ctl]', el).innerHTML = specs[k].f.map((f, i) => `<label class="ctl">${f[0]} <input type="${f[1]}" value="${f[2]}" ${f[1] === 'range' ? `min="${f[3]}" max="${f[4]}"` : ''} data-i="${i}" /></label>`).join('');
-    $$('[data-i]', el).forEach((inp) => inp.addEventListener('input', () => { vals[+inp.dataset.i] = inp.type === 'range' ? +inp.value : inp.value; draw(); })); draw();
-  };
-  $$('[data-sp]', el).forEach((t) => t.addEventListener('click', () => { $$('[data-sp]', el).forEach((x) => x.classList.toggle('is-on', x === t)); load(t.dataset.sp); }));
-  $('[data-copy]', el).addEventListener('click', () => copy($('[data-out]', el).textContent)); load('Gradient');
-}
-
-function unitTool(el) {
-  el.innerHTML = `<article class="panel-card"><h3>Pixels ⇄ rem</h3><div class="row"><input class="field" type="number" data-px value="16" aria-label="Pixels" /> px = <b data-rem>1</b> rem · base <input class="field" type="number" data-base value="16" aria-label="Base size" /></div></article>
-    <article class="panel-card"><h3>File size</h3><div class="row"><input class="field" type="number" data-d value="1" aria-label="Size" /><select class="select-field" data-du><option>KB</option><option selected>MB</option><option>GB</option><option>TB</option></select></div><p class="hint" data-dout></p></article>
-    <article class="panel-card"><h3>Unix timestamp</h3><div class="row"><input class="field grow" data-ts placeholder="e.g. 1700000000" aria-label="Timestamp" /><button class="btn" data-now>Now</button></div><p class="hint" data-tsout></p></article>`;
-  const px = () => { $('[data-rem]', el).textContent = (+$('[data-px]', el).value / (+$('[data-base]', el).value || 16)).toLocaleString(undefined, { maximumFractionDigits: 4 }); };
-  const dz = () => { const b = +$('[data-d]', el).value * 1024 ** (1 + $('[data-du]', el).selectedIndex); $('[data-dout]', el).textContent = ['Bytes', 'KB', 'MB', 'GB', 'TB'].map((u, i) => `${(b / 1024 ** i).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${u}`).join(' · '); };
-  const ts = () => { const v = $('[data-ts]', el).value.trim(); if (!v) { $('[data-tsout]', el).textContent = ''; return; } const n = +v; const d = new Date(n < 1e11 ? n * 1000 : n); $('[data-tsout]', el).textContent = Number.isNaN(d.getTime()) ? 'Invalid timestamp' : `${d.toLocaleString()} · ${d.toISOString()}`; };
-  $$('[data-px],[data-base]', el).forEach((i) => i.addEventListener('input', px)); $$('[data-d],[data-du]', el).forEach((i) => i.addEventListener('input', dz));
-  $('[data-ts]', el).addEventListener('input', ts); $('[data-now]', el).addEventListener('click', () => { $('[data-ts]', el).value = Math.floor(Date.now() / 1000); ts(); }); px(); dz();
-}
-
 function recorderTool(el) {
   el.innerHTML = `<div class="row"><label class="chip"><input type="checkbox" data-aud checked /> Include tab/system audio</label><label class="chip"><input type="checkbox" data-mic /> Include microphone</label></div><div class="row"><button class="btn primary" data-go>Start recording</button><span class="hint" data-msg></span></div><video class="rec-video" data-v controls hidden></video><div class="row"><a class="btn primary" data-dl hidden>Download recording</a></div>`;
   let rec = null; const go = $('[data-go]', el); const msg = $('[data-msg]', el);
@@ -241,7 +316,7 @@ function recorderTool(el) {
       rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
       rec.onstop = () => {
         streams.forEach((s) => s.getTracks().forEach((t) => t.stop())); const url = URL.createObjectURL(new Blob(chunks, { type: 'video/webm' }));
-        const v = $('[data-v]', el); v.src = url; v.hidden = false; const dl = $('[data-dl]', el); dl.href = url; dl.download = 'recording.webm'; dl.hidden = false; go.textContent = 'Start recording'; msg.textContent = 'Recording ready.';
+        const v = $('[data-v]', el); v.src = url; v.hidden = false; const dl = $('[data-dl]', el); dl.href = url; dl.download = 'recording.webm'; dl.removeAttribute('data-saved'); dl.hidden = false; go.textContent = 'Start recording'; msg.textContent = 'Recording ready.';
       };
       streams[0].getVideoTracks()[0].onended = () => { if (rec.state !== 'inactive') rec.stop(); };
       rec.start(); go.textContent = 'Stop recording'; msg.textContent = '● Recording…';
@@ -256,7 +331,7 @@ function bgTool(el) {
     $('[data-o]', el).src = URL.createObjectURL(f); $('[data-o]', el).hidden = false; $('[data-r]', el).hidden = true; $('[data-dl]', el).hidden = true; msg.textContent = 'Removing background… this can take a minute the first time.';
     try {
       const { removeBackground } = await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.5/+esm'); const blob = await removeBackground(f); const url = URL.createObjectURL(blob);
-      $('[data-r]', el).src = url; $('[data-r]', el).hidden = false; const dl = $('[data-dl]', el); dl.href = url; dl.download = `${f.name.replace(/\.[^.]+$/, '')}-nobg.png`; dl.hidden = false; msg.textContent = 'Done.';
+      $('[data-r]', el).src = url; $('[data-r]', el).hidden = false; const dl = $('[data-dl]', el); dl.href = url; dl.download = `${f.name.replace(/\.[^.]+$/, '')}-nobg.png`; dl.removeAttribute('data-saved'); dl.hidden = false; msg.textContent = 'Done.';
     } catch (e) { msg.textContent = `Could not run the model: ${e.message}`; }
   }, 'image/*');
 }
@@ -271,19 +346,6 @@ function showShared() {
   } catch { /* not a valid share link */ }
 }
 
-function encodeTool(el) {
-  el.innerHTML = `<textarea class="textarea-panel small" data-t placeholder="Input" aria-label="Input"></textarea>
-    <div class="row"><button class="chip" data-a="b64e">Base64 encode</button><button class="chip" data-a="b64d">Base64 decode</button><button class="chip" data-a="ue">URL encode</button><button class="chip" data-a="ud">URL decode</button></div>
-    <textarea class="textarea-panel small" data-o readonly placeholder="Output" aria-label="Output"></textarea><div class="row"><button class="btn" data-copy>Copy output</button></div>`;
-  const acts = {
-    b64e: (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s))),
-    b64d: (s) => new TextDecoder().decode(Uint8Array.from(atob(s.trim()), (c) => c.charCodeAt(0))),
-    ue: encodeURIComponent, ud: decodeURIComponent,
-  };
-  $$('[data-a]', el).forEach((b) => b.addEventListener('click', () => { try { $('[data-o]', el).value = acts[b.dataset.a]($('[data-t]', el).value); } catch { $('[data-o]', el).value = 'Invalid input for this operation.'; } }));
-  $('[data-copy]', el).addEventListener('click', () => copy($('[data-o]', el).value));
-}
-
 function padTool(el) {
   el.innerHTML = `<textarea class="textarea-panel" data-t placeholder="Scratchpad — saves automatically in this browser…" aria-label="Scratchpad"></textarea><p class="hint" data-s>Saved</p>`;
   const t = $('[data-t]', el); t.value = store.get('scratchpad', ''); let timer;
@@ -291,18 +353,13 @@ function padTool(el) {
 }
 
 const TOOLS = [
-  { id: 'image', name: 'Image Converter', icon: 'fa-image', group: 'Image & Media', render: imageTool },
+  { id: 'media', name: 'Media Converter', icon: 'fa-photo-film', group: 'Image & Media', render: mediaTool },
   { id: 'bg', name: 'Background Remover', icon: 'fa-wand-magic-sparkles', group: 'Image & Media', render: bgTool },
-  { id: 'color', name: 'Color Picker', icon: 'fa-palette', group: 'Image & Media', render: colorTool },
-  { id: 'pdf', name: 'PDF Merge & Split', icon: 'fa-file-pdf', group: 'PDF & Documents', render: pdfTool },
+  { id: 'docs', name: 'Document Tools', icon: 'fa-file-pdf', group: 'Documents', render: docTool },
+  { id: 'compare', name: 'Compare', icon: 'fa-code-compare', group: 'Documents', render: compareTool },
   { id: 'qr', name: 'QR Generator', icon: 'fa-qrcode', group: 'Quick Utilities', render: qrTool },
   { id: 'rec', name: 'Screen Recorder', icon: 'fa-video', group: 'Quick Utilities', render: recorderTool },
   { id: 'pad', name: 'Scratchpad', icon: 'fa-note-sticky', group: 'Quick Utilities', render: padTool },
-  { id: 'regex', name: 'Regex Tester', icon: 'fa-asterisk', group: 'Developer', render: regexTool },
-  { id: 'diff', name: 'Diff Checker', icon: 'fa-code-compare', group: 'Developer', render: diffTool },
-  { id: 'css', name: 'CSS Generator', icon: 'fa-wand-magic', group: 'Developer', render: cssTool },
-  { id: 'units', name: 'Unit Converter', icon: 'fa-ruler-combined', group: 'Developer', render: unitTool },
-  { id: 'encode', name: 'Base64 & URL', icon: 'fa-lock', group: 'Developer', render: encodeTool },
 ];
 const toolById = (id) => TOOLS.find((t) => t.id === id);
 
@@ -317,8 +374,8 @@ function renderCanvas() {
   blocks.forEach((b, i) => {
     const tool = b.type === 'tool' ? toolById(b.tool) : null;
     if (b.type === 'tool' && !tool) return;
-    const card = document.createElement('article'); card.className = 'block panel-card';
-    card.innerHTML = `<header class="block-head"><strong>${b.type === 'text' ? 'Note' : b.type === 'check' ? 'Checklist' : esc(tool.name)}</strong><span><button class="chip" data-mv="-1" aria-label="Move up">↑</button><button class="chip" data-mv="1" aria-label="Move down">↓</button><button class="chip" data-rm aria-label="Delete block">✕</button></span></header><div class="block-body"></div>`;
+    const card = document.createElement('article'); const wide = b.w ?? b.type === 'tool'; card.className = `block panel-card${wide ? ' wide' : ''}`;
+    card.innerHTML = `<header class="block-head"><strong>${b.type === 'text' ? 'Note' : b.type === 'check' ? 'Checklist' : esc(tool.name)}</strong><span><button class="chip" data-sz aria-label="Resize block">⤢</button><button class="chip" data-mv="-1" aria-label="Move up">↑</button><button class="chip" data-mv="1" aria-label="Move down">↓</button><button class="chip" data-rm aria-label="Delete block">✕</button></span></header><div class="block-body"></div>`;
     const body = $('.block-body', card);
     if (b.type === 'text') {
       const ta = document.createElement('textarea'); ta.className = 'textarea-panel small'; ta.value = b.data; ta.setAttribute('aria-label', 'Note');
@@ -332,6 +389,7 @@ function renderCanvas() {
       body.addEventListener('click', (e) => { const x = e.target.closest('[data-x]'); if (x) { b.data.splice(+x.dataset.x, 1); saveBlocks(); paint(); } });
       paint();
     } else tool.render(body);
+    $('[data-sz]', card).onclick = () => { b.w = !wide; saveBlocks(); renderCanvas(); };
     $('[data-rm]', card).onclick = () => { blocks.splice(i, 1); saveBlocks(); renderCanvas(); };
     $$('[data-mv]', card).forEach((m) => { m.onclick = () => { const j = i + +m.dataset.mv; if (j < 0 || j >= blocks.length) return; [blocks[i], blocks[j]] = [blocks[j], blocks[i]]; saveBlocks(); renderCanvas(); }; });
     c.append(card);
@@ -351,46 +409,68 @@ const APPS = [{ id: 'canvas', name: 'Canvas', sub: 'Block workspace for notes & 
   ...TOOLS.map((t) => ({ id: t.id, name: t.name, sub: t.group, icon: t.icon, render: t.render }))].map((a, i) => ({ ...a, color: COLORS[i] }));
 const appById = (id) => APPS.find((a) => a.id === id);
 
-/* ---------- App shell: launcher, sheets, stacks ---------- */
-const layer = $('#appSheetLayer'); const switcher = $('#taskSwitcher'); const stackList = $('#taskStackList');
-const running = new Set(); const appHistory = []; let current = null;
+/* ---------- Window manager: movable, resizable, multi-window; apps stay alive ---------- */
+const stackList = $('#taskStackList'); const switcher = $('#taskSwitcher');
 const stages = { landing: $('#landingStage'), device: $('#deviceStage'), desktop: $('#desktopStage') };
 const switchStage = (n) => Object.entries(stages).forEach(([k, s]) => { s.classList.toggle('is-active', k === n); s.setAttribute('aria-hidden', String(k !== n)); });
+const layer = document.createElement('div'); layer.id = 'winLayer'; $('#desktopStage').append(layer);
+const wins = new Map(); let zTop = 1; let focusedId = null; let cascade = 0;
+const compact = () => matchMedia('(max-width: 820px)').matches;
+const unsaved = (el) => el.querySelector('a[download]:not([hidden]):not([data-saved])');
 
 $('.launcher-grid').innerHTML = APPS.map((a) => `<button class="launcher-tile" type="button" data-app="${a.id}"><span class="launcher-orb" style="background:${a.color}"><i class="fa-solid ${a.icon}" aria-hidden="true"></i></span><span class="launcher-name">${a.name}</span></button>`).join('');
 $('.launcher-grid').addEventListener('click', (e) => { const b = e.target.closest('[data-app]'); if (b) openApp(b.dataset.app); });
+document.addEventListener('click', (e) => { const a = e.target.closest('a[download]'); if (a) a.dataset.saved = '1'; });
+window.addEventListener('beforeunload', (e) => { if ([...wins.values()].some((w) => unsaved(w.el))) { e.preventDefault(); e.returnValue = ''; } });
 
-function openApp(id, { track = true } = {}) {
+function focusWin(id) {
+  const w = wins.get(id); if (!w) return;
+  w.el.hidden = false; w.el.style.zIndex = ++zTop; focusedId = id;
+  wins.forEach((x, k) => x.el.classList.toggle('is-focus', k === id)); renderStacks();
+}
+function closeWin(id) {
+  const w = wins.get(id); if (!w) return;
+  if (unsaved(w.el) && !window.confirm(`${w.app.name} has a result you haven't saved yet. Close it anyway?`)) return;
+  w.el.remove(); wins.delete(id);
+  if (focusedId === id) { focusedId = null; const top = [...wins.entries()].filter(([, x]) => !x.el.hidden).sort((a, b) => b[1].el.style.zIndex - a[1].el.style.zIndex)[0]; if (top) focusWin(top[0]); }
+  renderStacks();
+}
+function minimise(id) { const w = wins.get(id); if (!w) return; w.el.hidden = true; w.el.classList.remove('is-focus'); if (focusedId === id) focusedId = null; renderStacks(); }
+
+function openApp(id) {
   const app = appById(id); if (!app) return;
-  if (current && current !== id && track) appHistory.push(current);
-  running.add(id); current = id;
-  layer.innerHTML = `<article class="app-sheet" role="dialog" aria-modal="true" aria-label="${esc(app.name)}"><header class="sheet-header"><span class="sheet-app-icon" style="background:${app.color}"><i class="fa-solid ${app.icon}" aria-hidden="true"></i></span><div class="sheet-title-group"><h2>${esc(app.name)}</h2><p>${esc(app.sub)}</p></div></header><div class="sheet-body"></div></article>`;
-  layer.classList.add('is-open'); layer.setAttribute('aria-hidden', 'false');
-  const sheet = $('.app-sheet', layer); requestAnimationFrame(() => sheet.classList.add('is-active'));
-  app.render($('.sheet-body', layer)); renderStacks();
+  if (wins.has(id)) { focusWin(id); return; }
+  const el = document.createElement('section'); el.className = 'win'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', app.name);
+  const w = Math.min(780, innerWidth - 40); const h = Math.min(540, innerHeight - 190); const n = cascade % 6; cascade += 1;
+  el.style.cssText = `width:${w}px;height:${h}px;left:${Math.max(10, (innerWidth - w) / 2 + (n - 3) * 30)}px;top:${96 + n * 30}px`;
+  el.innerHTML = `<header class="win-bar"><span class="win-icon" style="background:${app.color}"><i class="fa-solid ${app.icon}" aria-hidden="true"></i></span><strong class="win-title">${esc(app.name)}</strong><span class="win-btns"><button data-w="min" aria-label="Minimise">–</button><button data-w="max" aria-label="Maximise">□</button><button data-w="close" aria-label="Close">✕</button></span></header><div class="win-body"></div>`;
+  layer.append(el); wins.set(id, { el, app }); app.render($('.win-body', el)); focusWin(id);
+  el.addEventListener('pointerdown', () => { if (focusedId !== id) focusWin(id); }, true);
+  const bar = $('.win-bar', el);
+  bar.addEventListener('dblclick', (e) => { if (!e.target.closest('button')) el.classList.toggle('max'); });
+  bar.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button') || compact() || el.classList.contains('max')) return;
+    const sx = e.clientX - el.offsetLeft; const sy = e.clientY - el.offsetTop; bar.setPointerCapture(e.pointerId);
+    const move = (ev) => { el.style.left = `${Math.min(innerWidth - 120, Math.max(120 - el.offsetWidth, ev.clientX - sx))}px`; el.style.top = `${Math.min(innerHeight - 150, Math.max(70, ev.clientY - sy))}px`; };
+    const up = () => { bar.removeEventListener('pointermove', move); bar.removeEventListener('pointerup', up); };
+    bar.addEventListener('pointermove', move); bar.addEventListener('pointerup', up);
+  });
+  $('.win-btns', el).addEventListener('click', (e) => { const b = e.target.closest('[data-w]'); if (!b) return; if (b.dataset.w === 'min') minimise(id); else if (b.dataset.w === 'max') el.classList.toggle('max'); else closeWin(id); });
 }
-function closeSheet(clear) {
-  if (clear) appHistory.length = 0;
-  current = null; const sheet = $('.app-sheet', layer); if (sheet) sheet.classList.remove('is-active');
-  setTimeout(() => { if (!current) { layer.innerHTML = ''; layer.classList.remove('is-open'); layer.setAttribute('aria-hidden', 'true'); } }, 420);
-}
+
 function closeStacks() { switcher.classList.remove('is-open'); switcher.setAttribute('aria-hidden', 'true'); $('#stacksButton').classList.remove('is-active'); }
-function goBack() { closeStacks(); if (!current) return; const prev = appHistory.pop(); if (prev) openApp(prev, { track: false }); else { closeSheet(); renderStacks(); } }
-function goHome() { closeStacks(); closeSheet(true); renderStacks(); }
-function terminate(id) { running.delete(id); for (let i = appHistory.length - 1; i >= 0; i -= 1) if (appHistory[i] === id) appHistory.splice(i, 1); if (current === id) closeSheet(); renderStacks(); }
 function renderStacks() {
-  stackList.innerHTML = running.size ? [...running].map((id) => { const a = appById(id); return `<article class="stack-card${id === current ? ' is-current' : ''}" data-stack="${id}" role="button" tabindex="0" aria-label="Switch to ${esc(a.name)}"><span class="stack-card-icon" style="background:${a.color}"><i class="fa-solid ${a.icon}" aria-hidden="true"></i></span><span><strong>${esc(a.name)}</strong><small>${esc(a.sub)}</small></span><button class="terminate-app-btn" type="button" data-close="${id}" aria-label="Close ${esc(a.name)}"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></article>`; }).join('') : '<div class="empty-stacks">No running apps yet. Launch a tool from the home screen.</div>';
+  stackList.innerHTML = wins.size ? [...wins.entries()].map(([id, { el, app }]) => `<article class="stack-card${id === focusedId ? ' is-current' : ''}" data-stack="${id}" role="button" tabindex="0" aria-label="Open ${esc(app.name)}"><span class="stack-card-icon" style="background:${app.color}"><i class="fa-solid ${app.icon}" aria-hidden="true"></i></span><span><strong>${esc(app.name)}</strong><small>${el.hidden ? 'Minimised' : id === focusedId ? 'In front' : 'Open'}${unsaved(el) ? ' · unsaved result' : ''}</small></span><button class="terminate-app-btn" type="button" data-close="${id}" aria-label="Close ${esc(app.name)}"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></article>`).join('') : '<div class="empty-stacks">No open windows. Launch a tool from the home screen.</div>';
 }
-stackList.addEventListener('click', (e) => { const c = e.target.closest('[data-close]'); if (c) { e.stopPropagation(); return terminate(c.dataset.close); } const s = e.target.closest('[data-stack]'); if (s) { openApp(s.dataset.stack); closeStacks(); } });
-stackList.addEventListener('keydown', (e) => { const s = e.target.closest('[data-stack]'); if (s && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openApp(s.dataset.stack); closeStacks(); } });
-$('#backButton').addEventListener('click', goBack);
-$('#homeButton').addEventListener('click', goHome);
+stackList.addEventListener('click', (e) => { const c = e.target.closest('[data-close]'); if (c) { e.stopPropagation(); closeWin(c.dataset.close); return; } const s = e.target.closest('[data-stack]'); if (s) { focusWin(s.dataset.stack); closeStacks(); } });
+stackList.addEventListener('keydown', (e) => { const s = e.target.closest('[data-stack]'); if (s && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); focusWin(s.dataset.stack); closeStacks(); } });
+$('#backButton').addEventListener('click', () => { closeStacks(); if (focusedId) minimise(focusedId); });
+$('#homeButton').addEventListener('click', () => { closeStacks(); wins.forEach((_, id) => minimise(id)); });
 $('#stacksButton').addEventListener('click', () => { const open = !switcher.classList.contains('is-open'); switcher.classList.toggle('is-open', open); switcher.setAttribute('aria-hidden', String(!open)); $('#stacksButton').classList.toggle('is-active', open); if (open) renderStacks(); });
 $('#closeStacksBtn').addEventListener('click', closeStacks);
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && current) goHome(); });
 
 /* ---------- Stages, device choice, clock ---------- */
 $('#getStartedBtn').addEventListener('click', () => switchStage('device'));
-$$('[data-device]').forEach((b) => b.addEventListener('click', () => { $('#systemMode').textContent = `WizOS - ${b.dataset.device} Mode`; closeStacks(); closeSheet(true); switchStage('desktop'); }));
+$$('[data-device]').forEach((b) => b.addEventListener('click', () => { $('#systemMode').textContent = `WizOS - ${b.dataset.device} Mode`; closeStacks(); switchStage('desktop'); }));
 const tick = () => { const n = new Date(); $('#clockDisplay').textContent = n.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }); $('#clockDisplay').dateTime = n.toISOString(); };
 tick(); setInterval(tick, 1000); renderStacks(); showShared();
