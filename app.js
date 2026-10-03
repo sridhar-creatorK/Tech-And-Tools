@@ -34,7 +34,7 @@ function wireDrop(el, cb, accept) {
 
 /* ---------- Tools ---------- */
 function imageTool(el) {
-  el.innerHTML = `${dropHtml('Drop images here or click to choose')}
+  el.innerHTML = `${dropHtml('Drop images here or click to choose (JPG, PNG, WebP, GIF, BMP…)')}
     <div class="row"><label>Quality <input type="range" min="10" max="100" value="75" data-q /> <b data-qv>75</b>%</label>
       <select class="select-field" data-fmt aria-label="Output format"><option value="image/jpeg">JPEG</option><option value="image/webp">WebP</option><option value="image/png">PNG (lossless)</option></select>
       <input class="field" type="number" min="16" data-w placeholder="Max width px" aria-label="Max width" /></div>
@@ -108,60 +108,167 @@ function pdfTool(el) {
   });
 }
 
-function qrTool(el) {
-  el.innerHTML = `<textarea class="textarea-panel small" data-t placeholder="URL, text, Wi-Fi string…" aria-label="QR content">https://</textarea>
-    <div class="row"><select class="select-field" data-s aria-label="Size"><option value="192">Small</option><option value="256" selected>Medium</option><option value="384">Large</option></select>
-    <button class="btn primary" data-dl>Download PNG</button><span class="hint" data-msg></span></div><div class="qr-box" data-qr></div>`;
-  const box = $('[data-qr]', el);
-  const make = async () => {
-    try {
-      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js');
-      box.innerHTML = ''; const text = $('[data-t]', el).value.trim(); const s = +$('[data-s]', el).value;
-      if (text) new window.QRCode(box, { text, width: s, height: s, correctLevel: window.QRCode.CorrectLevel.M });
-    } catch (err) { $('[data-msg]', el).textContent = err.message; }
-  };
-  $('[data-t]', el).addEventListener('input', make); $('[data-s]', el).addEventListener('change', make);
-  $('[data-dl]', el).addEventListener('click', () => { const c = $('canvas', box); if (c) c.toBlob((b) => download(b, 'qr-code.png')); });
-  make();
-}
-
-function wordTool(el) {
-  el.innerHTML = `<textarea class="textarea-panel" data-t placeholder="Paste or type your text…" aria-label="Text to analyse"></textarea><div class="stat-grid" data-stats></div><div class="hint" data-kw></div>`;
-  const t = $('[data-t]', el);
-  const update = () => {
-    const v = t.value; const words = v.match(/[\p{L}\p{N}'’-]+/gu) || [];
-    const stats = { Words: words.length, Characters: v.length, 'No spaces': v.replace(/\s/g, '').length, Sentences: (v.match(/[^.!?]+[.!?]+/g) || (v.trim() ? [v] : [])).length, Paragraphs: v.split(/\n\s*\n/).filter((p) => p.trim()).length, 'Reading time': `${Math.ceil(words.length / 220)} min` };
-    $('[data-stats]', el).innerHTML = Object.entries(stats).map(([k, n]) => `<div class="panel-card"><small>${k}</small><strong>${n}</strong></div>`).join('');
-    const freq = {}; words.map((w) => w.toLowerCase()).filter((w) => w.length > 3).forEach((w) => { freq[w] = (freq[w] || 0) + 1; });
-    const top = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 5);
-    $('[data-kw]', el).textContent = top.length ? `Top keywords: ${top.map(([w, n]) => `${w} (${((n / words.length) * 100).toFixed(1)}%)`).join(', ')}` : '';
-  };
-  t.addEventListener('input', update); update();
-}
-
-const W = (s) => s.replace(/([a-z])([A-Z])/g, '$1 $2').match(/[\p{L}\p{N}]+/gu) || [];
-const caseFns = {
-  UPPERCASE: (s) => s.toUpperCase(), lowercase: (s) => s.toLowerCase(),
-  'Title Case': (s) => s.toLowerCase().replace(/(^|\s)\S/g, (m) => m.toUpperCase()),
-  'Sentence case': (s) => s.toLowerCase().replace(/(^\s*|[.!?]\s+)(\p{L})/gu, (m, a, b) => a + b.toUpperCase()),
-  camelCase: (s) => W(s).map((x, i) => (i ? x[0].toUpperCase() + x.slice(1).toLowerCase() : x.toLowerCase())).join(''),
-  snake_case: (s) => W(s).join('_').toLowerCase(), 'kebab-case': (s) => W(s).join('-').toLowerCase(),
+const b64u = (s) => btoa(String.fromCharCode(...new TextEncoder().encode(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const unb64u = (s) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0)));
+const wq = (s = '') => s.replace(/([\\;,:"])/g, '\\$1');
+const QR_KINDS = {
+  text: { label: 'Text, name or word', f: [['t', 'Type anything…', 'area']], out: (v) => v.t },
+  url: { label: 'Website link', f: [['u', 'https://example.com']], out: (v) => v.u && (/^[a-z]+:/i.test(v.u) ? v.u : `https://${v.u}`) },
+  page: { label: 'Web page (opens when scanned)', f: [['title', 'Page title'], ['body', 'Page text — links become clickable', 'area']], out: (v) => (v.title || v.body ? `${location.origin}${location.pathname}#share=${b64u(JSON.stringify({ t: v.title || '', b: v.body || '' }))}` : '') },
+  wifi: { label: 'Wi-Fi', f: [['ssid', 'Network name'], ['pw', 'Password'], ['sec', '', 'sel:WPA,WEP,nopass']], out: (v) => (v.ssid ? `WIFI:T:${v.sec};S:${wq(v.ssid)};P:${wq(v.pw)};;` : '') },
+  contact: { label: 'Contact card', f: [['name', 'Full name'], ['phone', 'Phone'], ['email', 'Email'], ['org', 'Company']], out: (v) => (v.name ? `BEGIN:VCARD\nVERSION:3.0\nFN:${v.name}\nTEL:${v.phone || ''}\nEMAIL:${v.email || ''}\nORG:${v.org || ''}\nEND:VCARD` : '') },
+  mail: { label: 'Email', f: [['to', 'To'], ['sub', 'Subject'], ['body', 'Message', 'area']], out: (v) => (v.to ? `mailto:${v.to}?subject=${encodeURIComponent(v.sub || '')}&body=${encodeURIComponent(v.body || '')}` : '') },
+  phone: { label: 'Phone number', f: [['n', '+91…']], out: (v) => (v.n ? `tel:${v.n}` : '') },
 };
-function caseTool(el) {
-  el.innerHTML = `<textarea class="textarea-panel small" data-t placeholder="Type or paste text…" aria-label="Text"></textarea>
-    <div class="row">${Object.keys(caseFns).map((k) => `<button class="chip" data-c="${k}">${k}</button>`).join('')}</div><div class="row"><button class="btn" data-copy>Copy</button></div>`;
-  const t = $('[data-t]', el);
-  $$('[data-c]', el).forEach((b) => b.addEventListener('click', () => { t.value = caseFns[b.dataset.c](t.value); }));
-  $('[data-copy]', el).addEventListener('click', () => copy(t.value));
+function qrTool(el) {
+  el.innerHTML = `<div class="row"><select class="select-field" data-k aria-label="QR type">${Object.entries(QR_KINDS).map(([k, d]) => `<option value="${k}">${d.label}</option>`).join('')}</select>
+    <select class="select-field" data-s aria-label="Size"><option value="192">Small</option><option value="256" selected>Medium</option><option value="384">Large</option></select></div>
+    <div class="stack-gap" data-fields></div><div class="row"><button class="btn primary" data-dl>Download PNG</button><span class="hint" data-msg></span></div>
+    <div class="qr-box" data-qr></div>
+    <p class="hint">QR codes hold text and links, not files. For a file or folder, upload it to Drive or Dropbox and paste the share link under “Website link”.</p>`;
+  const box = $('[data-qr]', el); const msg = $('[data-msg]', el);
+  const values = () => Object.fromEntries($$('[data-n]', el).map((i) => [i.dataset.n, i.value.trim()]));
+  const make = async () => {
+    msg.textContent = ''; box.innerHTML = '';
+    const payload = QR_KINDS[$('[data-k]', el).value].out(values()); if (!payload) return;
+    if ($('[data-k]', el).value === 'page' && !/^https?:$/.test(location.protocol)) msg.textContent = 'Web-page codes only work once WizOS is hosted online.';
+    try {
+      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js'); const s = +$('[data-s]', el).value;
+      new window.QRCode(box, { text: payload, width: s, height: s, correctLevel: payload.length > 350 ? window.QRCode.CorrectLevel.L : window.QRCode.CorrectLevel.M });
+    } catch (err) { box.innerHTML = ''; msg.textContent = /overflow/i.test(err.message) ? 'Too much content for one QR code (about 2,000 characters max).' : err.message; }
+  };
+  const fields = () => {
+    $('[data-fields]', el).innerHTML = QR_KINDS[$('[data-k]', el).value].f.map(([n, ph, t = '']) => (t === 'area' ? `<textarea class="textarea-panel small" data-n="${n}" placeholder="${ph}" aria-label="${ph}"></textarea>` : t.startsWith('sel:') ? `<select class="select-field" data-n="${n}" aria-label="Security">${t.slice(4).split(',').map((o) => `<option>${o}</option>`).join('')}</select>` : `<input class="field" data-n="${n}" placeholder="${ph}" aria-label="${ph}" />`)).join('');
+    $$('[data-n]', el).forEach((i) => i.addEventListener('input', make)); make();
+  };
+  $('[data-k]', el).addEventListener('change', fields); $('[data-s]', el).addEventListener('change', make);
+  $('[data-dl]', el).addEventListener('click', () => { const c = $('canvas', box); if (c) c.toBlob((b) => download(b, 'qr-code.png')); });
+  fields();
 }
 
-function jsonTool(el) {
-  el.innerHTML = `<textarea class="textarea-panel code" data-t placeholder='{"paste":"JSON here"}' aria-label="JSON"></textarea>
-    <div class="row"><button class="btn primary" data-f>Format</button><button class="btn" data-m>Minify</button><button class="btn" data-copy>Copy</button><span class="hint grow" data-msg></span></div>`;
-  const t = $('[data-t]', el); const msg = $('[data-msg]', el);
-  const run = (space) => { try { t.value = JSON.stringify(JSON.parse(t.value), null, space); msg.textContent = '✓ Valid JSON'; } catch (e) { msg.textContent = `✗ ${e.message}`; } };
-  $('[data-f]', el).addEventListener('click', () => run(2)); $('[data-m]', el).addEventListener('click', () => run(0));
-  $('[data-copy]', el).addEventListener('click', () => copy(t.value));
+function colorTool(el) {
+  el.innerHTML = `<div class="row"><input type="color" class="colorpick" data-c value="#6366f1" aria-label="Pick colour" /><input class="field" data-hex value="#6366f1" aria-label="Hex" /><button class="btn" data-copy>Copy HEX</button>${window.EyeDropper ? '<button class="btn" data-eye>Pick from screen</button>' : ''}</div><p class="hint" data-fmt></p>${dropHtml('Drop an image to extract its colour palette')}<div class="swatches" data-sw></div>`;
+  const set = (h) => {
+    if (!/^#[0-9a-f]{6}$/i.test(h)) return;
+    $('[data-c]', el).value = h; $('[data-hex]', el).value = h;
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)); const R = r / 255; const G = g / 255; const B = b / 255;
+    const mx = Math.max(R, G, B); const mn = Math.min(R, G, B); const l = (mx + mn) / 2; const d = mx - mn; let hh = 0; let s = 0;
+    if (d) { s = d / (1 - Math.abs(2 * l - 1)); hh = mx === R ? ((G - B) / d) % 6 : mx === G ? (B - R) / d + 2 : (R - G) / d + 4; hh = Math.round(hh * 60 + 360) % 360; }
+    $('[data-fmt]', el).textContent = `RGB(${r}, ${g}, ${b}) · HSL(${hh}, ${Math.round(s * 100)}%, ${Math.round(l * 100)}%)`;
+  };
+  $('[data-c]', el).addEventListener('input', (e) => set(e.target.value)); $('[data-hex]', el).addEventListener('input', (e) => set(e.target.value.trim()));
+  $('[data-copy]', el).addEventListener('click', () => copy($('[data-hex]', el).value));
+  $('[data-eye]', el)?.addEventListener('click', async () => { try { set((await new window.EyeDropper().open()).sRGBHex); } catch { /* cancelled */ } });
+  $('[data-sw]', el).addEventListener('click', (e) => { const b = e.target.closest('[data-h]'); if (b) { set(b.dataset.h); copy(b.dataset.h); } });
+  wireDrop(el, async (fs) => {
+    const f = fs.find((x) => x.type.startsWith('image/')); if (!f) return;
+    const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d'); x.drawImage(await createImageBitmap(f), 0, 0, 64, 64);
+    const px = x.getImageData(0, 0, 64, 64).data; const cnt = {};
+    for (let i = 0; i < px.length; i += 4) { if (px[i + 3] < 128) continue; const k = [px[i], px[i + 1], px[i + 2]].map((v) => v >> 5).join(); cnt[k] = (cnt[k] || 0) + 1; }
+    const top = Object.entries(cnt).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k]) => `#${k.split(',').map((v) => ((+v << 5) + 16).toString(16).padStart(2, '0')).join('')}`);
+    $('[data-sw]', el).innerHTML = top.map((h) => `<button class="swatch" style="background:${h}" data-h="${h}">${h}</button>`).join('');
+  }, 'image/*'); set('#6366f1');
+}
+
+function diffTool(el) {
+  el.innerHTML = `<div class="two"><textarea class="textarea-panel small code" data-a placeholder="Original text" aria-label="Original"></textarea><textarea class="textarea-panel small code" data-b placeholder="Changed text" aria-label="Changed"></textarea></div><div class="panel-card diff" data-o><span class="hint">Differences appear here.</span></div>`;
+  const run = () => {
+    const a = $('[data-a]', el).value.split('\n'); const b = $('[data-b]', el).value.split('\n'); const n = a.length; const m = b.length;
+    const L = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i -= 1) for (let j = m - 1; j >= 0; j -= 1) L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    let i = 0; let j = 0; let h = '';
+    while (i < n && j < m) { if (a[i] === b[j]) { h += `<div>  ${esc(a[i])}</div>`; i += 1; j += 1; } else if (L[i + 1][j] >= L[i][j + 1]) { h += `<div class="del">− ${esc(a[i])}</div>`; i += 1; } else { h += `<div class="add">+ ${esc(b[j])}</div>`; j += 1; } }
+    while (i < n) { h += `<div class="del">− ${esc(a[i])}</div>`; i += 1; } while (j < m) { h += `<div class="add">+ ${esc(b[j])}</div>`; j += 1; }
+    $('[data-o]', el).innerHTML = h;
+  };
+  $$('textarea', el).forEach((t) => t.addEventListener('input', run));
+}
+
+function regexTool(el) {
+  el.innerHTML = `<div class="row"><input class="field grow code" data-p placeholder="Pattern, e.g. \\d+" aria-label="Pattern" /><input class="field" style="width:5rem" data-f value="g" aria-label="Flags" /></div><textarea class="textarea-panel small" data-t placeholder="Test text…" aria-label="Test text"></textarea><div class="panel-card"><div class="rx-out" data-o></div><p class="hint" data-msg></p></div>`;
+  const run = () => {
+    const p = $('[data-p]', el).value; const t = $('[data-t]', el).value; const msg = $('[data-msg]', el); const o = $('[data-o]', el);
+    if (!p) { o.textContent = t; msg.textContent = ''; return; }
+    try {
+      const fl = $('[data-f]', el).value; const re = new RegExp(p, fl.includes('g') ? fl : `${fl}g`); let last = 0; let html = ''; let n = 0;
+      for (const m of t.matchAll(re)) { html += `${esc(t.slice(last, m.index))}<mark>${esc(m[0])}</mark>`; last = m.index + m[0].length; n += 1; if (n > 2000) break; }
+      o.innerHTML = html + esc(t.slice(last)); msg.textContent = `${n} match${n === 1 ? '' : 'es'}`;
+    } catch (e) { msg.textContent = `✗ ${e.message}`; }
+  };
+  $$('input,textarea', el).forEach((i) => i.addEventListener('input', run));
+}
+
+function cssTool(el) {
+  const rgba = (h, a) => `rgba(${[1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)).join(', ')}, ${a})`;
+  const specs = {
+    Gradient: { f: [['Colour 1', 'color', '#6366f1'], ['Colour 2', 'color', '#ec4899'], ['Angle', 'range', 135, 0, 360]], css: (v) => `background: linear-gradient(${v[2]}deg, ${v[0]}, ${v[1]});` },
+    Shadow: { f: [['X', 'range', 0, -50, 50], ['Y', 'range', 12, -50, 50], ['Blur', 'range', 30, 0, 100], ['Spread', 'range', 0, -30, 30], ['Colour', 'color', '#000000'], ['Opacity %', 'range', 35, 0, 100]], css: (v) => `box-shadow: ${v[0]}px ${v[1]}px ${v[2]}px ${v[3]}px ${rgba(v[4], v[5] / 100)};` },
+    Glass: { f: [['Blur', 'range', 16, 0, 40], ['Opacity %', 'range', 18, 0, 60]], css: (v) => `background: rgba(255, 255, 255, ${v[1] / 100});\nbackdrop-filter: blur(${v[0]}px);\nborder: 1px solid rgba(255, 255, 255, 0.35);` },
+  };
+  el.innerHTML = `<div class="tabs">${Object.keys(specs).map((k, i) => `<button class="tab ${i ? '' : 'is-on'}" data-sp="${k}">${k}</button>`).join('')}</div><div class="css-stage"><div class="css-preview" data-pv></div></div><div class="row" data-ctl></div><pre class="css-out" data-out></pre><div class="row"><button class="btn" data-copy>Copy CSS</button></div>`;
+  let cur = 'Gradient'; let vals = [];
+  const draw = () => { const css = specs[cur].css(vals); $('[data-out]', el).textContent = css; $('[data-pv]', el).style.cssText = css; };
+  const load = (k) => {
+    cur = k; vals = specs[k].f.map((f) => f[2]);
+    $('[data-ctl]', el).innerHTML = specs[k].f.map((f, i) => `<label class="ctl">${f[0]} <input type="${f[1]}" value="${f[2]}" ${f[1] === 'range' ? `min="${f[3]}" max="${f[4]}"` : ''} data-i="${i}" /></label>`).join('');
+    $$('[data-i]', el).forEach((inp) => inp.addEventListener('input', () => { vals[+inp.dataset.i] = inp.type === 'range' ? +inp.value : inp.value; draw(); })); draw();
+  };
+  $$('[data-sp]', el).forEach((t) => t.addEventListener('click', () => { $$('[data-sp]', el).forEach((x) => x.classList.toggle('is-on', x === t)); load(t.dataset.sp); }));
+  $('[data-copy]', el).addEventListener('click', () => copy($('[data-out]', el).textContent)); load('Gradient');
+}
+
+function unitTool(el) {
+  el.innerHTML = `<article class="panel-card"><h3>Pixels ⇄ rem</h3><div class="row"><input class="field" type="number" data-px value="16" aria-label="Pixels" /> px = <b data-rem>1</b> rem · base <input class="field" type="number" data-base value="16" aria-label="Base size" /></div></article>
+    <article class="panel-card"><h3>File size</h3><div class="row"><input class="field" type="number" data-d value="1" aria-label="Size" /><select class="select-field" data-du><option>KB</option><option selected>MB</option><option>GB</option><option>TB</option></select></div><p class="hint" data-dout></p></article>
+    <article class="panel-card"><h3>Unix timestamp</h3><div class="row"><input class="field grow" data-ts placeholder="e.g. 1700000000" aria-label="Timestamp" /><button class="btn" data-now>Now</button></div><p class="hint" data-tsout></p></article>`;
+  const px = () => { $('[data-rem]', el).textContent = (+$('[data-px]', el).value / (+$('[data-base]', el).value || 16)).toLocaleString(undefined, { maximumFractionDigits: 4 }); };
+  const dz = () => { const b = +$('[data-d]', el).value * 1024 ** (1 + $('[data-du]', el).selectedIndex); $('[data-dout]', el).textContent = ['Bytes', 'KB', 'MB', 'GB', 'TB'].map((u, i) => `${(b / 1024 ** i).toLocaleString(undefined, { maximumFractionDigits: 3 })} ${u}`).join(' · '); };
+  const ts = () => { const v = $('[data-ts]', el).value.trim(); if (!v) { $('[data-tsout]', el).textContent = ''; return; } const n = +v; const d = new Date(n < 1e11 ? n * 1000 : n); $('[data-tsout]', el).textContent = Number.isNaN(d.getTime()) ? 'Invalid timestamp' : `${d.toLocaleString()} · ${d.toISOString()}`; };
+  $$('[data-px],[data-base]', el).forEach((i) => i.addEventListener('input', px)); $$('[data-d],[data-du]', el).forEach((i) => i.addEventListener('input', dz));
+  $('[data-ts]', el).addEventListener('input', ts); $('[data-now]', el).addEventListener('click', () => { $('[data-ts]', el).value = Math.floor(Date.now() / 1000); ts(); }); px(); dz();
+}
+
+function recorderTool(el) {
+  el.innerHTML = `<div class="row"><label class="chip"><input type="checkbox" data-aud checked /> Include tab/system audio</label><label class="chip"><input type="checkbox" data-mic /> Include microphone</label></div><div class="row"><button class="btn primary" data-go>Start recording</button><span class="hint" data-msg></span></div><video class="rec-video" data-v controls hidden></video><div class="row"><a class="btn primary" data-dl hidden>Download recording</a></div>`;
+  let rec = null; const go = $('[data-go]', el); const msg = $('[data-msg]', el);
+  go.addEventListener('click', async () => {
+    if (rec && rec.state !== 'inactive') { rec.stop(); return; }
+    if (!navigator.mediaDevices?.getDisplayMedia) { msg.textContent = 'Screen recording is not supported in this browser.'; return; }
+    try {
+      const streams = [await navigator.mediaDevices.getDisplayMedia({ video: true, audio: $('[data-aud]', el).checked })]; const tracks = [...streams[0].getTracks()];
+      if ($('[data-mic]', el).checked) { const m = await navigator.mediaDevices.getUserMedia({ audio: true }); streams.push(m); tracks.push(...m.getAudioTracks()); }
+      const chunks = []; rec = new MediaRecorder(new MediaStream(tracks));
+      rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+      rec.onstop = () => {
+        streams.forEach((s) => s.getTracks().forEach((t) => t.stop())); const url = URL.createObjectURL(new Blob(chunks, { type: 'video/webm' }));
+        const v = $('[data-v]', el); v.src = url; v.hidden = false; const dl = $('[data-dl]', el); dl.href = url; dl.download = 'recording.webm'; dl.hidden = false; go.textContent = 'Start recording'; msg.textContent = 'Recording ready.';
+      };
+      streams[0].getVideoTracks()[0].onended = () => { if (rec.state !== 'inactive') rec.stop(); };
+      rec.start(); go.textContent = 'Stop recording'; msg.textContent = '● Recording…';
+    } catch (e) { msg.textContent = e.name === 'NotAllowedError' ? 'Permission was denied.' : e.message; }
+  });
+}
+
+function bgTool(el) {
+  el.innerHTML = `${dropHtml('Drop a photo to remove its background')}<p class="hint" data-msg>The first use downloads an AI model (about 40 MB); after that it is fast.</p><div class="row"><img class="bg-prev" data-o alt="Original" hidden /><img class="bg-prev checker" data-r alt="Result" hidden /></div><div class="row"><a class="btn primary" data-dl hidden>Download PNG</a></div>`;
+  wireDrop(el, async (fs) => {
+    const f = fs.find((x) => x.type.startsWith('image/')); if (!f) return; const msg = $('[data-msg]', el);
+    $('[data-o]', el).src = URL.createObjectURL(f); $('[data-o]', el).hidden = false; $('[data-r]', el).hidden = true; $('[data-dl]', el).hidden = true; msg.textContent = 'Removing background… this can take a minute the first time.';
+    try {
+      const { removeBackground } = await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.5/+esm'); const blob = await removeBackground(f); const url = URL.createObjectURL(blob);
+      $('[data-r]', el).src = url; $('[data-r]', el).hidden = false; const dl = $('[data-dl]', el); dl.href = url; dl.download = `${f.name.replace(/\.[^.]+$/, '')}-nobg.png`; dl.hidden = false; msg.textContent = 'Done.';
+    } catch (e) { msg.textContent = `Could not run the model: ${e.message}`; }
+  }, 'image/*');
+}
+
+function showShared() {
+  const m = location.hash.match(/^#share=(.+)$/); if (!m) return;
+  try {
+    const d = JSON.parse(unb64u(m[1])); const body = esc(d.b || '').replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+    const v = document.createElement('div'); v.className = 'share-view';
+    v.innerHTML = `<article class="panel-card share-card"><p class="eyebrow">Shared with WizOS</p><h2>${esc(d.t || 'Shared note')}</h2><div class="share-body">${body}</div><div class="row"><button class="btn" data-c>Copy text</button><button class="btn primary" data-x>Open WizOS</button></div></article>`;
+    $('[data-c]', v).onclick = () => copy(`${d.t}\n${d.b}`); $('[data-x]', v).onclick = () => { v.remove(); history.replaceState(null, '', location.pathname); }; document.body.append(v);
+  } catch { /* not a valid share link */ }
 }
 
 function encodeTool(el) {
@@ -184,14 +291,18 @@ function padTool(el) {
 }
 
 const TOOLS = [
-  { id: 'image', name: 'Image Compressor', icon: 'fa-image', group: 'Image & Media', render: imageTool },
+  { id: 'image', name: 'Image Converter', icon: 'fa-image', group: 'Image & Media', render: imageTool },
+  { id: 'bg', name: 'Background Remover', icon: 'fa-wand-magic-sparkles', group: 'Image & Media', render: bgTool },
+  { id: 'color', name: 'Color Picker', icon: 'fa-palette', group: 'Image & Media', render: colorTool },
   { id: 'pdf', name: 'PDF Merge & Split', icon: 'fa-file-pdf', group: 'PDF & Documents', render: pdfTool },
-  { id: 'words', name: 'Word Counter', icon: 'fa-text-height', group: 'Text & Content', render: wordTool },
-  { id: 'case', name: 'Case Converter', icon: 'fa-font', group: 'Text & Content', render: caseTool },
-  { id: 'json', name: 'JSON Formatter', icon: 'fa-code', group: 'Developer', render: jsonTool },
-  { id: 'encode', name: 'Base64 & URL', icon: 'fa-lock', group: 'Developer', render: encodeTool },
   { id: 'qr', name: 'QR Generator', icon: 'fa-qrcode', group: 'Quick Utilities', render: qrTool },
+  { id: 'rec', name: 'Screen Recorder', icon: 'fa-video', group: 'Quick Utilities', render: recorderTool },
   { id: 'pad', name: 'Scratchpad', icon: 'fa-note-sticky', group: 'Quick Utilities', render: padTool },
+  { id: 'regex', name: 'Regex Tester', icon: 'fa-asterisk', group: 'Developer', render: regexTool },
+  { id: 'diff', name: 'Diff Checker', icon: 'fa-code-compare', group: 'Developer', render: diffTool },
+  { id: 'css', name: 'CSS Generator', icon: 'fa-wand-magic', group: 'Developer', render: cssTool },
+  { id: 'units', name: 'Unit Converter', icon: 'fa-ruler-combined', group: 'Developer', render: unitTool },
+  { id: 'encode', name: 'Base64 & URL', icon: 'fa-lock', group: 'Developer', render: encodeTool },
 ];
 const toolById = (id) => TOOLS.find((t) => t.id === id);
 
@@ -199,7 +310,7 @@ const toolById = (id) => TOOLS.find((t) => t.id === id);
 let blocks = store.get('blocks', [{ id: 1, type: 'text', data: 'Welcome to WizOS.\nAdd notes, checklists and tools as blocks — everything saves automatically.' }]);
 const saveBlocks = () => store.set('blocks', blocks);
 let canvasRoot = null;
-function addBlock(spec) { blocks.push({ id: Date.now(), data: spec.type === 'check' ? [] : '', ...spec }); saveBlocks(); renderCanvas(); }
+function addBlock(spec) { blocks.unshift({ id: Date.now(), data: spec.type === 'check' ? [] : '', ...spec }); saveBlocks(); renderCanvas(); }
 
 function renderCanvas() {
   const c = canvasRoot; c.innerHTML = blocks.length ? '' : '<p class="hint">Empty canvas — use “Add block” to start.</p>';
@@ -228,11 +339,12 @@ function renderCanvas() {
 }
 
 
-const COLORS = ['linear-gradient(135deg,#8b5cf6,#22d3ee)', 'linear-gradient(135deg,#ec4899,#fb7185)', 'linear-gradient(135deg,#ff4d6d,#be123c)', 'linear-gradient(135deg,#2563eb,#38bdf8)', 'linear-gradient(135deg,#16a34a,#86efac)', 'linear-gradient(135deg,#ffb347,#ff7a45)', 'linear-gradient(135deg,#6366f1,#14b8a6)', 'linear-gradient(135deg,#0ea5e9,#6366f1)', 'linear-gradient(135deg,#f59e0b,#ef4444)'];
+const COLORS = ['linear-gradient(135deg,#8b5cf6,#22d3ee)', 'linear-gradient(135deg,#ec4899,#fb7185)', 'linear-gradient(135deg,#ff4d6d,#be123c)', 'linear-gradient(135deg,#2563eb,#38bdf8)', 'linear-gradient(135deg,#16a34a,#86efac)', 'linear-gradient(135deg,#ffb347,#ff7a45)', 'linear-gradient(135deg,#6366f1,#14b8a6)', 'linear-gradient(135deg,#0ea5e9,#6366f1)', 'linear-gradient(135deg,#f59e0b,#ef4444)', 'linear-gradient(135deg,#14b8a6,#3b82f6)', 'linear-gradient(135deg,#a855f7,#ec4899)', 'linear-gradient(135deg,#f97316,#eab308)', 'linear-gradient(135deg,#06b6d4,#22c55e)'];
 function canvasApp(el) {
-  el.innerHTML = `<div class="work-head"><p class="hint">Mix notes, checklists and tools on one page. Everything saves automatically.</p><select id="addBlock" class="select-field" aria-label="Add block"><option value="">+ Add block…</option><option value="text">Note</option><option value="check">Checklist</option>${TOOLS.map((t) => `<option value="tool:${t.id}">${t.name}</option>`).join('')}</select></div><div class="canvas"></div>`;
+  el.innerHTML = `<div class="row"><button class="btn primary" data-add="text"><i class="fa-solid fa-plus"></i> New note</button><button class="btn primary" data-add="check"><i class="fa-solid fa-plus"></i> New checklist</button></div>
+    <p class="hint">Or drop a tool onto your canvas:</p><div class="row">${TOOLS.map((t) => `<button class="chip" data-add="tool:${t.id}"><i class="fa-solid ${t.icon}"></i> ${t.name}</button>`).join('')}</div><div class="canvas"></div>`;
   canvasRoot = $('.canvas', el);
-  $('#addBlock', el).addEventListener('change', (e) => { const v = e.target.value; e.target.value = ''; if (v) addBlock(v.startsWith('tool:') ? { type: 'tool', tool: v.slice(5) } : { type: v }); });
+  el.addEventListener('click', (e) => { const b = e.target.closest('[data-add]'); if (!b) return; const v = b.dataset.add; addBlock(v.startsWith('tool:') ? { type: 'tool', tool: v.slice(5) } : { type: v }); });
   renderCanvas();
 }
 const APPS = [{ id: 'canvas', name: 'Canvas', sub: 'Block workspace for notes & tools', icon: 'fa-table-cells-large', render: canvasApp },
@@ -281,4 +393,4 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && current)
 $('#getStartedBtn').addEventListener('click', () => switchStage('device'));
 $$('[data-device]').forEach((b) => b.addEventListener('click', () => { $('#systemMode').textContent = `WizOS - ${b.dataset.device} Mode`; closeStacks(); closeSheet(true); switchStage('desktop'); }));
 const tick = () => { const n = new Date(); $('#clockDisplay').textContent = n.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }); $('#clockDisplay').dateTime = n.toISOString(); };
-tick(); setInterval(tick, 1000); renderStacks();
+tick(); setInterval(tick, 1000); renderStacks(); showShared();
