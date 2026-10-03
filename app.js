@@ -198,10 +198,11 @@ const toolById = (id) => TOOLS.find((t) => t.id === id);
 /* ---------- Block canvas ---------- */
 let blocks = store.get('blocks', [{ id: 1, type: 'text', data: 'Welcome to WizOS.\nAdd notes, checklists and tools as blocks — everything saves automatically.' }]);
 const saveBlocks = () => store.set('blocks', blocks);
-function addBlock(spec) { blocks.push({ id: Date.now(), data: spec.type === 'check' ? [] : '', ...spec }); saveBlocks(); renderCanvas(); showCanvas(); }
+let canvasRoot = null;
+function addBlock(spec) { blocks.push({ id: Date.now(), data: spec.type === 'check' ? [] : '', ...spec }); saveBlocks(); renderCanvas(); }
 
 function renderCanvas() {
-  const c = $('#canvas'); c.innerHTML = blocks.length ? '' : '<p class="hint">Empty canvas — add a block from the menu above or the + beside any tool.</p>';
+  const c = canvasRoot; c.innerHTML = blocks.length ? '' : '<p class="hint">Empty canvas — use “Add block” to start.</p>';
   blocks.forEach((b, i) => {
     const tool = b.type === 'tool' ? toolById(b.tool) : null;
     if (b.type === 'tool' && !tool) return;
@@ -226,36 +227,58 @@ function renderCanvas() {
   });
 }
 
-/* ---------- Workspace shell ---------- */
-function showCanvas() { $('#canvas').hidden = false; $('#toolView').hidden = true; $('#viewCanvas').classList.add('is-on'); $('#viewTool').hidden = true; $('#viewTool').classList.remove('is-on'); }
-function openTool(id) {
-  const tool = toolById(id); const view = $('#toolView');
-  view.innerHTML = ''; tool.render(view); view.hidden = false; $('#canvas').hidden = true;
-  $('#viewCanvas').classList.remove('is-on'); const vt = $('#viewTool'); vt.hidden = false; vt.classList.add('is-on'); vt.innerHTML = `<i class="fa-solid ${tool.icon}"></i> ${esc(tool.name)}`;
-}
-function renderLibrary(filter = '') {
-  const f = filter.toLowerCase(); const groups = {};
-  TOOLS.filter((t) => `${t.name} ${t.group}`.toLowerCase().includes(f)).forEach((t) => (groups[t.group] ||= []).push(t));
-  $('#toolLibrary').innerHTML = Object.entries(groups).map(([g, ts]) => `<h3 class="lib-group">${g}</h3>${ts.map((t) => `<div class="lib-item"><button class="lib-open" data-open="${t.id}"><i class="fa-solid ${t.icon}"></i> ${t.name}</button><button class="chip" data-add="${t.id}" title="Add to canvas" aria-label="Add ${t.name} to canvas">+</button></div>`).join('')}`).join('') || '<p class="hint">No tools match.</p>';
-}
-$('#toolLibrary').addEventListener('click', (e) => {
-  const o = e.target.closest('[data-open]'); const a = e.target.closest('[data-add]');
-  if (o) openTool(o.dataset.open); if (a) { addBlock({ type: 'tool', tool: a.dataset.add }); toast('Added to canvas'); }
-});
-$('#toolSearch').addEventListener('input', (e) => renderLibrary(e.target.value));
-$('#viewCanvas').addEventListener('click', showCanvas);
-$('#addBlock').innerHTML = `<option value="">+ Add block…</option><option value="text">Note</option><option value="check">Checklist</option>${TOOLS.map((t) => `<option value="tool:${t.id}">${t.name}</option>`).join('')}`;
-$('#addBlock').addEventListener('change', (e) => {
-  const v = e.target.value; e.target.value = ''; if (!v) return;
-  addBlock(v.startsWith('tool:') ? { type: 'tool', tool: v.slice(5) } : { type: v });
-});
 
-/* ---------- Stages, device choice, clock ---------- */
+const COLORS = ['linear-gradient(135deg,#8b5cf6,#22d3ee)', 'linear-gradient(135deg,#ec4899,#fb7185)', 'linear-gradient(135deg,#ff4d6d,#be123c)', 'linear-gradient(135deg,#2563eb,#38bdf8)', 'linear-gradient(135deg,#16a34a,#86efac)', 'linear-gradient(135deg,#ffb347,#ff7a45)', 'linear-gradient(135deg,#6366f1,#14b8a6)', 'linear-gradient(135deg,#0ea5e9,#6366f1)', 'linear-gradient(135deg,#f59e0b,#ef4444)'];
+function canvasApp(el) {
+  el.innerHTML = `<div class="work-head"><p class="hint">Mix notes, checklists and tools on one page. Everything saves automatically.</p><select id="addBlock" class="select-field" aria-label="Add block"><option value="">+ Add block…</option><option value="text">Note</option><option value="check">Checklist</option>${TOOLS.map((t) => `<option value="tool:${t.id}">${t.name}</option>`).join('')}</select></div><div class="canvas"></div>`;
+  canvasRoot = $('.canvas', el);
+  $('#addBlock', el).addEventListener('change', (e) => { const v = e.target.value; e.target.value = ''; if (v) addBlock(v.startsWith('tool:') ? { type: 'tool', tool: v.slice(5) } : { type: v }); });
+  renderCanvas();
+}
+const APPS = [{ id: 'canvas', name: 'Canvas', sub: 'Block workspace for notes & tools', icon: 'fa-table-cells-large', render: canvasApp },
+  ...TOOLS.map((t) => ({ id: t.id, name: t.name, sub: t.group, icon: t.icon, render: t.render }))].map((a, i) => ({ ...a, color: COLORS[i] }));
+const appById = (id) => APPS.find((a) => a.id === id);
+
+/* ---------- App shell: launcher, sheets, stacks ---------- */
+const layer = $('#appSheetLayer'); const switcher = $('#taskSwitcher'); const stackList = $('#taskStackList');
+const running = new Set(); const appHistory = []; let current = null;
 const stages = { landing: $('#landingStage'), device: $('#deviceStage'), desktop: $('#desktopStage') };
 const switchStage = (n) => Object.entries(stages).forEach(([k, s]) => { s.classList.toggle('is-active', k === n); s.setAttribute('aria-hidden', String(k !== n)); });
+
+$('.launcher-grid').innerHTML = APPS.map((a) => `<button class="launcher-tile" type="button" data-app="${a.id}"><span class="launcher-orb" style="background:${a.color}"><i class="fa-solid ${a.icon}" aria-hidden="true"></i></span><span class="launcher-name">${a.name}</span></button>`).join('');
+$('.launcher-grid').addEventListener('click', (e) => { const b = e.target.closest('[data-app]'); if (b) openApp(b.dataset.app); });
+
+function openApp(id, { track = true } = {}) {
+  const app = appById(id); if (!app) return;
+  if (current && current !== id && track) appHistory.push(current);
+  running.add(id); current = id;
+  layer.innerHTML = `<article class="app-sheet" role="dialog" aria-modal="true" aria-label="${esc(app.name)}"><header class="sheet-header"><span class="sheet-app-icon" style="background:${app.color}"><i class="fa-solid ${app.icon}" aria-hidden="true"></i></span><div class="sheet-title-group"><h2>${esc(app.name)}</h2><p>${esc(app.sub)}</p></div></header><div class="sheet-body"></div></article>`;
+  layer.classList.add('is-open'); layer.setAttribute('aria-hidden', 'false');
+  const sheet = $('.app-sheet', layer); requestAnimationFrame(() => sheet.classList.add('is-active'));
+  app.render($('.sheet-body', layer)); renderStacks();
+}
+function closeSheet(clear) {
+  if (clear) appHistory.length = 0;
+  current = null; const sheet = $('.app-sheet', layer); if (sheet) sheet.classList.remove('is-active');
+  setTimeout(() => { if (!current) { layer.innerHTML = ''; layer.classList.remove('is-open'); layer.setAttribute('aria-hidden', 'true'); } }, 420);
+}
+function closeStacks() { switcher.classList.remove('is-open'); switcher.setAttribute('aria-hidden', 'true'); $('#stacksButton').classList.remove('is-active'); }
+function goBack() { closeStacks(); if (!current) return; const prev = appHistory.pop(); if (prev) openApp(prev, { track: false }); else { closeSheet(); renderStacks(); } }
+function goHome() { closeStacks(); closeSheet(true); renderStacks(); }
+function terminate(id) { running.delete(id); for (let i = appHistory.length - 1; i >= 0; i -= 1) if (appHistory[i] === id) appHistory.splice(i, 1); if (current === id) closeSheet(); renderStacks(); }
+function renderStacks() {
+  stackList.innerHTML = running.size ? [...running].map((id) => { const a = appById(id); return `<article class="stack-card${id === current ? ' is-current' : ''}" data-stack="${id}" role="button" tabindex="0" aria-label="Switch to ${esc(a.name)}"><span class="stack-card-icon" style="background:${a.color}"><i class="fa-solid ${a.icon}" aria-hidden="true"></i></span><span><strong>${esc(a.name)}</strong><small>${esc(a.sub)}</small></span><button class="terminate-app-btn" type="button" data-close="${id}" aria-label="Close ${esc(a.name)}"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button></article>`; }).join('') : '<div class="empty-stacks">No running apps yet. Launch a tool from the home screen.</div>';
+}
+stackList.addEventListener('click', (e) => { const c = e.target.closest('[data-close]'); if (c) { e.stopPropagation(); return terminate(c.dataset.close); } const s = e.target.closest('[data-stack]'); if (s) { openApp(s.dataset.stack); closeStacks(); } });
+stackList.addEventListener('keydown', (e) => { const s = e.target.closest('[data-stack]'); if (s && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openApp(s.dataset.stack); closeStacks(); } });
+$('#backButton').addEventListener('click', goBack);
+$('#homeButton').addEventListener('click', goHome);
+$('#stacksButton').addEventListener('click', () => { const open = !switcher.classList.contains('is-open'); switcher.classList.toggle('is-open', open); switcher.setAttribute('aria-hidden', String(!open)); $('#stacksButton').classList.toggle('is-active', open); if (open) renderStacks(); });
+$('#closeStacksBtn').addEventListener('click', closeStacks);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && current) goHome(); });
+
+/* ---------- Stages, device choice, clock ---------- */
 $('#getStartedBtn').addEventListener('click', () => switchStage('device'));
-$('#switchDevice').addEventListener('click', () => switchStage('device'));
-$$('[data-device]').forEach((b) => b.addEventListener('click', () => { $('#systemMode').textContent = `WizOS - ${b.dataset.device} Mode`; switchStage('desktop'); }));
+$$('[data-device]').forEach((b) => b.addEventListener('click', () => { $('#systemMode').textContent = `WizOS - ${b.dataset.device} Mode`; closeStacks(); closeSheet(true); switchStage('desktop'); }));
 const tick = () => { const n = new Date(); $('#clockDisplay').textContent = n.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }); $('#clockDisplay').dateTime = n.toISOString(); };
-tick(); setInterval(tick, 1000);
-renderLibrary(); renderCanvas();
+tick(); setInterval(tick, 1000); renderStacks();
