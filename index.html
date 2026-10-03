@@ -33,20 +33,20 @@
 
           <div class="module-preview-row" aria-label="WizOS quick-access previews">
             <article class="module-preview preview-calculator">
-              <span class="preview-orb"><i class="fa-solid fa-calculator" aria-hidden="true"></i></span>
-              <span>Calculator</span>
+              <span class="preview-orb"><i class="fa-solid fa-image" aria-hidden="true"></i></span>
+              <span>Image Tools</span>
             </article>
             <article class="module-preview preview-converter">
-              <span class="preview-orb"><i class="fa-solid fa-right-left" aria-hidden="true"></i></span>
-              <span>Converter</span>
+              <span class="preview-orb"><i class="fa-solid fa-file-pdf" aria-hidden="true"></i></span>
+              <span>PDF Tools</span>
             </article>
             <article class="module-preview preview-notepad">
-              <span class="preview-orb"><i class="fa-solid fa-note-sticky" aria-hidden="true"></i></span>
-              <span>Notepad</span>
+              <span class="preview-orb"><i class="fa-solid fa-qrcode" aria-hidden="true"></i></span>
+              <span>QR &amp; Text</span>
             </article>
             <article class="module-preview preview-clock">
-              <span class="preview-orb"><i class="fa-solid fa-clock" aria-hidden="true"></i></span>
-              <span>Clock</span>
+              <span class="preview-orb"><i class="fa-solid fa-code" aria-hidden="true"></i></span>
+              <span>Dev Tools</span>
             </article>
           </div>
         </div>
@@ -58,31 +58,31 @@
           </div>
           <div class="tools-preview-grid">
             <article class="tool-preview-card">
-              <span class="tool-card-icon preview-calculator"><i class="fa-solid fa-calculator" aria-hidden="true"></i></span>
+              <span class="tool-card-icon preview-calculator"><i class="fa-solid fa-image" aria-hidden="true"></i></span>
               <div>
-                <h3>Calculator</h3>
-                <p>Expression calculator with history and keyboard input.</p>
+                <h3>Image Tools</h3>
+                <p>Compress, resize and convert images without uploading them.</p>
               </div>
             </article>
             <article class="tool-preview-card">
-              <span class="tool-card-icon preview-converter"><i class="fa-solid fa-right-left" aria-hidden="true"></i></span>
+              <span class="tool-card-icon preview-converter"><i class="fa-solid fa-file-pdf" aria-hidden="true"></i></span>
               <div>
-                <h3>Converter</h3>
-                <p>Length, weight, temperature, data, speed and time.</p>
+                <h3>PDF Tools</h3>
+                <p>Merge and split PDFs privately, right in your browser.</p>
               </div>
             </article>
             <article class="tool-preview-card">
-              <span class="tool-card-icon preview-notepad"><i class="fa-solid fa-note-sticky" aria-hidden="true"></i></span>
+              <span class="tool-card-icon preview-notepad"><i class="fa-solid fa-qrcode" aria-hidden="true"></i></span>
               <div>
-                <h3>Notepad</h3>
-                <p>Autosaving notes with word count and .txt export.</p>
+                <h3>QR &amp; Text</h3>
+                <p>Generate QR codes, count words and change text case.</p>
               </div>
             </article>
             <article class="tool-preview-card">
-              <span class="tool-card-icon preview-clock"><i class="fa-solid fa-clock" aria-hidden="true"></i></span>
+              <span class="tool-card-icon preview-clock"><i class="fa-solid fa-code" aria-hidden="true"></i></span>
               <div>
-                <h3>Clock</h3>
-                <p>World clocks, timer, stopwatch and alarms that ring.</p>
+                <h3>Dev Tools</h3>
+                <p>Format JSON, encode Base64 and URLs in one click.</p>
               </div>
             </article>
           </div>
@@ -128,81 +128,28 @@
         </div>
         <time id="clockDisplay" class="clock-display" datetime="">--:--:-- --</time>
         <div class="status-icons" aria-label="System status">
-          <i class="fa-solid fa-wifi" title="Wi-Fi connected" aria-label="Wi-Fi connected"></i>
-          <i class="fa-solid fa-battery-three-quarters" title="Battery charged" aria-label="Battery charged"></i>
+          <button id="switchDevice" class="chip" type="button">Switch device</button>
         </div>
       </header>
 
-      <section class="launcher-shell" aria-label="WizOS tool launcher">
-        <div class="launcher-grid" aria-label="WizOS tool launcher grid">
-          <button class="launcher-tile theme-clock" type="button" data-app="clock">
-            <span class="launcher-orb"><i class="fa-solid fa-clock" aria-hidden="true"></i></span>
-            <span class="launcher-name">Clock</span>
-          </button>
-          <button class="launcher-tile theme-video" type="button" data-app="video">
-            <span class="launcher-orb"><i class="fa-solid fa-film" aria-hidden="true"></i></span>
-            <span class="launcher-name">Video Studio</span>
-          </button>
-          <button class="launcher-tile theme-audio" type="button" data-app="audio">
-            <span class="launcher-orb"><i class="fa-solid fa-microphone-lines" aria-hidden="true"></i></span>
-            <span class="launcher-name">Audio Studio</span>
-          </button>
-          <button class="launcher-tile theme-ai" type="button" data-app="ai">
-            <span class="launcher-orb"><i class="fa-solid fa-brain" aria-hidden="true"></i></span>
-            <span class="launcher-name">AI Assistant</span>
-          </button>
-          <button class="launcher-tile theme-calculator" type="button" data-app="calculator">
-            <span class="launcher-orb"><i class="fa-solid fa-calculator" aria-hidden="true"></i></span>
-            <span class="launcher-name">Calculator</span>
-          </button>
-          <button class="launcher-tile theme-converter" type="button" data-app="converter">
-            <span class="launcher-orb"><i class="fa-solid fa-right-left" aria-hidden="true"></i></span>
-            <span class="launcher-name">Converter</span>
-          </button>
-          <button class="launcher-tile theme-notepad" type="button" data-app="notepad">
-            <span class="launcher-orb"><i class="fa-solid fa-note-sticky" aria-hidden="true"></i></span>
-            <span class="launcher-name">Notepad</span>
-          </button>
-          <button class="launcher-tile theme-tasks" type="button" data-app="tasks">
-            <span class="launcher-orb"><i class="fa-solid fa-list-check" aria-hidden="true"></i></span>
-            <span class="launcher-name">Tasks</span>
-          </button>
-          <button class="launcher-tile theme-password" type="button" data-app="password">
-            <span class="launcher-orb"><i class="fa-solid fa-key" aria-hidden="true"></i></span>
-            <span class="launcher-name">Password Lab</span>
-          </button>
-        </div>
-      </section>
-
-      <section id="appSheetLayer" class="app-sheet-layer" aria-live="polite" aria-hidden="true"></section>
-
-      <aside id="taskSwitcher" class="task-switcher glass-card" aria-labelledby="taskSwitcherTitle" aria-hidden="true">
-        <div class="task-switcher-header">
-          <div>
-            <p class="eyebrow">Running utilities</p>
-            <h2 id="taskSwitcherTitle">Stacks</h2>
+      <div class="workspace">
+        <aside class="library glass-card" aria-label="Tool library">
+          <input id="toolSearch" class="field" type="search" placeholder="Search tools…" aria-label="Search tools" />
+          <div id="toolLibrary"></div>
+        </aside>
+        <main class="work glass-card">
+          <div class="work-head">
+            <div class="tabs"><button class="tab is-on" id="viewCanvas" type="button"><i class="fa-solid fa-table-cells-large"></i> Canvas</button><button class="tab" id="viewTool" type="button" hidden></button></div>
+            <select id="addBlock" class="select-field" aria-label="Add block"></select>
           </div>
-          <button id="closeStacksBtn" class="icon-button" type="button" aria-label="Close stacks drawer">
-            <i class="fa-solid fa-xmark" aria-hidden="true"></i>
-          </button>
-        </div>
-        <div id="taskStackList" class="task-stack-list" aria-label="Running WizOS apps"></div>
-      </aside>
-
-      <nav class="system-nav glass-bar" aria-label="WizOS operation navigation">
-        <button id="backButton" class="system-nav-btn" type="button" aria-label="Back">
-          <span aria-hidden="true">◀</span>
-          <strong>Back</strong>
-        </button>
-        <button id="homeButton" class="system-nav-btn home-trigger" type="button" aria-label="Home">
-          <span aria-hidden="true">●</span>
-          <strong>Home</strong>
-        </button>
-        <button id="stacksButton" class="system-nav-btn" type="button" aria-label="Stacks">
-          <span aria-hidden="true">☱</span>
-          <strong>Stacks</strong>
-        </button>
-      </nav>
+          <div id="canvas" class="canvas"></div>
+          <div id="toolView" class="toolview" hidden></div>
+        </main>
+        <aside class="ai-slot glass-card" aria-label="AI quick help (coming soon)">
+          <p class="eyebrow">Quick Help</p><h3>AI Sidebar</h3>
+          <p class="hint">Coming in the next phase: ask, rewrite, summarise and send answers straight to a block.</p>
+        </aside>
+      </div>
     </section>
   </main>
 
