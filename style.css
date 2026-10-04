@@ -1347,3 +1347,14 @@ mark { background: #fde047; color: #1f2937; border-radius: 4px; padding: 0 2px; 
 .cmp { margin: 0; } .cmp-canvas { width: 100%; height: auto; border-radius: 14px; background: #fff; }
 .cmp figcaption { margin-top: 0.3rem; font-size: 0.85rem; color: var(--muted); }
 .diff-doc { white-space: pre-wrap; word-break: break-word; line-height: 1.7; max-height: 420px; overflow: auto; }
+
+/* ---------- AI Assistant ---------- */
+.chat-log { display: grid; gap: 0.6rem; align-content: start; min-height: 220px; max-height: 46vh; overflow: auto; padding: 0.4rem; border-radius: 18px; background: rgba(0,0,0,0.18); }
+.bubble { max-width: 92%; padding: 0.7rem 0.9rem; border-radius: 18px; line-height: 1.55; word-break: break-word; background: rgba(255,255,255,0.14); }
+.bubble.user { justify-self: end; background: rgba(56,189,248,0.32); }
+.bubble.err { background: rgba(239,68,68,0.35); }
+.bubble pre { margin: 0.5rem 0; padding: 0.7rem; overflow: auto; border-radius: 12px; background: rgba(0,0,0,0.35); font-size: 0.85rem; }
+.bubble code { font-family: ui-monospace, Menlo, Consolas, monospace; }
+.bubble-tools { display: flex; gap: 0.4rem; margin-top: 0.5rem; }
+.chat-input { display: flex; gap: 0.5rem; align-items: stretch; }
+.chat-input .textarea-panel { min-height: 56px; flex: 1; }

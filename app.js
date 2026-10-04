@@ -352,11 +352,173 @@ function padTool(el) {
   t.addEventListener('input', () => { $('[data-s]', el).textContent = 'Saving…'; clearTimeout(timer); timer = setTimeout(() => { store.set('scratchpad', t.value); $('[data-s]', el).textContent = 'Saved'; }, 350); });
 }
 
+/* ---------- Translate & Grammar ---------- */
+const LANGS = [['en', 'English'], ['hi', 'Hindi'], ['kn', 'Kannada'], ['ta', 'Tamil'], ['te', 'Telugu'], ['ml', 'Malayalam'], ['mr', 'Marathi'], ['bn', 'Bengali'], ['gu', 'Gujarati'], ['pa', 'Punjabi'], ['ur', 'Urdu'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['it', 'Italian'], ['pt', 'Portuguese'], ['ru', 'Russian'], ['ja', 'Japanese'], ['ko', 'Korean'], ['zh', 'Chinese'], ['ar', 'Arabic'], ['tr', 'Turkish'], ['nl', 'Dutch']];
+function chunkText(t, max) {
+  const out = []; let cur = '';
+  for (const part of t.match(/[^.!?\n।]+[.!?।]*\s*|\n+/g) || [t]) {
+    if (cur && (cur + part).length > max) { out.push(cur); cur = ''; }
+    cur += part; while (cur.length > max) { out.push(cur.slice(0, max)); cur = cur.slice(max); }
+  }
+  if (cur) out.push(cur); return out;
+}
+async function ltCheck(text, lang) {
+  const matches = []; let base = 0;
+  for (const chunk of chunkText(text, 15000)) {
+    const r = await fetch('https://api.languagetool.org/v2/check', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ text: chunk, language: lang }) });
+    if (!r.ok) throw new Error(r.status === 429 ? 'Too many requests — wait a minute and try again.' : `Grammar service error (${r.status})`);
+    (await r.json()).matches.forEach((m) => matches.push({ ...m, offset: m.offset + base })); base += chunk.length;
+  }
+  return matches;
+}
+function writeTool(el) {
+  const opt = (sel) => LANGS.map(([c, n]) => `<option value="${c}"${c === sel ? ' selected' : ''}>${n}</option>`).join('');
+  el.innerHTML = `<div class="tabs"><button class="tab is-on" data-m="tr">Translate</button><button class="tab" data-m="gr">Grammar check</button></div>
+  <section data-p="tr" class="stack-gap"><div class="row"><select class="select-field" data-from aria-label="From"><option value="auto">Detect language</option>${opt('')}</select><span>→</span><select class="select-field" data-to aria-label="To">${opt('en')}</select><button class="chip" data-swap aria-label="Swap languages">⇄</button></div>
+    <textarea class="textarea-panel" data-src placeholder="Paste or type your text — long documents are fine" aria-label="Text to translate"></textarea>
+    <div class="row"><button class="btn primary" data-tgo>Translate</button><span class="hint" data-tmsg></span></div>
+    <textarea class="textarea-panel" data-dst readonly placeholder="Translation appears here" aria-label="Translation"></textarea><div class="row"><button class="btn" data-tcopy>Copy translation</button></div></section>
+  <section data-p="gr" class="stack-gap" hidden><div class="row"><select class="select-field" data-glang aria-label="Language"><option value="auto">Detect language</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="de-DE">German</option><option value="fr">French</option><option value="es">Spanish</option><option value="it">Italian</option><option value="pt-PT">Portuguese</option><option value="nl">Dutch</option></select></div>
+    <textarea class="textarea-panel" data-gtxt placeholder="Paste your text to check spelling and grammar" aria-label="Text to check"></textarea>
+    <div class="row"><button class="btn primary" data-ggo>Check grammar</button><button class="btn" data-gfix>Fix all</button><button class="btn" data-gcopy>Copy text</button><span class="hint" data-gmsg></span></div><div class="list" data-gout></div>
+    <p class="hint">Grammar checking covers English and major European languages. Indian languages are not supported by this checker.</p></section>`;
+  const q = (s) => $(s, el);
+  $$('[data-m]', el).forEach((t) => t.addEventListener('click', () => { $$('[data-m]', el).forEach((x) => x.classList.toggle('is-on', x === t)); $$('[data-p]', el).forEach((p) => { p.hidden = p.dataset.p !== t.dataset.m; }); }));
+  q('[data-swap]').addEventListener('click', () => { const f = q('[data-from]'); const t = q('[data-to]'); if (f.value === 'auto') return; [f.value, t.value] = [t.value, f.value]; q('[data-src]').value = q('[data-dst]').value; q('[data-dst]').value = ''; });
+  q('[data-tcopy]').addEventListener('click', () => copy(q('[data-dst]').value));
+  const mm = (c) => (c === 'zh' ? 'zh-CN' : c); const tmsg = (t) => { q('[data-tmsg]').textContent = t; };
+  q('[data-tgo]').addEventListener('click', async () => {
+    const text = q('[data-src]').value; if (!text.trim()) return; const from = q('[data-from]').value; const to = q('[data-to]').value; const dst = q('[data-dst]'); dst.value = '';
+    try {
+      if (window.Translator) {
+        try {
+          let s = from; if (s === 'auto') { if (!window.LanguageDetector) throw new Error('no detector'); s = (await (await window.LanguageDetector.create()).detect(text.slice(0, 2000)))[0].detectedLanguage; }
+          if (s === to) { dst.value = text; return tmsg('Source and target language are the same.'); }
+          if ((await window.Translator.availability({ sourceLanguage: s, targetLanguage: to })) === 'unavailable') throw new Error('pair unavailable');
+          tmsg('Preparing on-device translator…'); const tr = await window.Translator.create({ sourceLanguage: s, targetLanguage: to }); const parts = chunkText(text, 1500); const res = [];
+          for (let i = 0; i < parts.length; i += 1) { tmsg(`Translating ${i + 1}/${parts.length} on your device…`); res.push(await tr.translate(parts[i])); dst.value = res.join(''); }
+          return tmsg('Done · translated on your device, nothing was uploaded.');
+        } catch { /* fall back to online service */ }
+      }
+      const parts = chunkText(text, 450); const res = [];
+      for (let i = 0; i < parts.length; i += 1) {
+        tmsg(`Translating ${i + 1}/${parts.length}…`);
+        const r = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(parts[i])}&langpair=${from === 'auto' ? 'Autodetect' : mm(from)}|${mm(to)}`); const j = await r.json();
+        const t = j.responseData?.translatedText || ''; if (/MYMEMORY WARNING/i.test(t) || (j.responseStatus && +j.responseStatus !== 200)) throw new Error('The free translation limit for today has been reached. Try again tomorrow or use a shorter text.');
+        res.push(t); dst.value = res.join('');
+      }
+      tmsg('Done · translated with the free online service.');
+    } catch (e) { tmsg(`✗ ${e.message}`); }
+  });
+  let matches = []; const gta = q('[data-gtxt]'); const gmsg = (t) => { q('[data-gmsg]').textContent = t; };
+  const check = async () => {
+    if (!gta.value.trim()) return; gmsg('Checking…');
+    try {
+      matches = await ltCheck(gta.value, q('[data-glang]').value); const text = gta.value;
+      q('[data-gout]').innerHTML = matches.length ? matches.slice(0, 150).map((m, i) => `<div class="list-row"><span class="grow"><b>${esc(text.substr(m.offset, m.length) || '·')}</b> — ${esc(m.message)}</span>${m.replacements.slice(0, 3).map((r, k) => `<button class="chip" data-fix="${i}:${k}">${esc(r.value) || '(remove)'}</button>`).join('')}</div>`).join('') : '<p class="hint">✓ No problems found.</p>';
+      gmsg(matches.length ? `${matches.length} issue(s) found.` : 'All good.');
+    } catch (e) { gmsg(`✗ ${e.message}`); }
+  };
+  const applyFix = (m, rep) => { gta.value = gta.value.slice(0, m.offset) + rep + gta.value.slice(m.offset + m.length); };
+  q('[data-ggo]').addEventListener('click', check);
+  q('[data-gout]').addEventListener('click', (e) => { const b = e.target.closest('[data-fix]'); if (!b) return; const [i, k] = b.dataset.fix.split(':').map(Number); applyFix(matches[i], matches[i].replacements[k].value); check(); });
+  q('[data-gfix]').addEventListener('click', () => { let limit = Infinity; [...matches].sort((a, b) => b.offset - a.offset).forEach((m) => { if (m.replacements.length && m.offset + m.length <= limit) { applyFix(m, m.replacements[0].value); limit = m.offset; } }); check(); });
+  q('[data-gcopy]').addEventListener('click', () => copy(gta.value));
+}
+
+/* ---------- Read & Speak: voice typing + read aloud ---------- */
+function speakTool(el) {
+  const VL = [['en-IN', 'English (India)'], ['en-US', 'English (US)'], ['en-GB', 'English (UK)'], ['hi-IN', 'Hindi'], ['kn-IN', 'Kannada'], ['ta-IN', 'Tamil'], ['te-IN', 'Telugu'], ['ml-IN', 'Malayalam'], ['mr-IN', 'Marathi'], ['bn-IN', 'Bengali'], ['gu-IN', 'Gujarati'], ['pa-IN', 'Punjabi'], ['es-ES', 'Spanish'], ['fr-FR', 'French'], ['de-DE', 'German']];
+  el.innerHTML = `<div class="tabs"><button class="tab is-on" data-m="vt"><i class="fa-solid fa-microphone"></i> Voice typing</button><button class="tab" data-m="ra"><i class="fa-solid fa-volume-high"></i> Read aloud</button></div>
+  <section data-p="vt" class="stack-gap"><div class="row"><select class="select-field" data-vl aria-label="Spoken language">${VL.map(([c, n]) => `<option value="${c}">${n}</option>`).join('')}</select><button class="btn primary" data-mic><i class="fa-solid fa-microphone"></i> Start speaking</button><span class="hint" data-vmsg></span></div>
+    <textarea class="textarea-panel" data-vtxt placeholder="Your words appear here as you speak" aria-label="Voice typing text"></textarea><div class="row"><button class="btn" data-vcopy>Copy</button><button class="btn" data-vclear>Clear</button></div></section>
+  <section data-p="ra" class="stack-gap" hidden><textarea class="textarea-panel" data-rtxt placeholder="Paste text to have it read aloud" aria-label="Text to read"></textarea>
+    <div class="opt-grid"><label>Voice <select class="select-field" data-voice></select></label><label>Speed <input type="range" min="0.6" max="1.6" step="0.1" value="1" data-rate /></label></div>
+    <div class="row"><button class="btn primary" data-play><i class="fa-solid fa-play"></i> Read</button><button class="btn" data-pause>Pause</button><button class="btn" data-stop>Stop</button><span class="hint" data-rmsg></span></div></section>`;
+  const q = (s) => $(s, el);
+  $$('[data-m]', el).forEach((t) => t.addEventListener('click', () => { $$('[data-m]', el).forEach((x) => x.classList.toggle('is-on', x === t)); $$('[data-p]', el).forEach((p) => { p.hidden = p.dataset.p !== t.dataset.m; }); }));
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition; let rec = null; let on = false; const mic = q('[data-mic]'); const vtxt = q('[data-vtxt]');
+  mic.addEventListener('click', () => {
+    if (!SR) return (q('[data-vmsg]').textContent = 'Voice typing needs Chrome or Edge.');
+    if (on) { on = false; rec?.stop(); mic.innerHTML = '<i class="fa-solid fa-microphone"></i> Start speaking'; q('[data-vmsg]').textContent = ''; return; }
+    on = true; let base = vtxt.value ? `${vtxt.value} ` : '';
+    const start = () => {
+      rec = new SR(); rec.lang = q('[data-vl]').value; rec.continuous = true; rec.interimResults = true;
+      rec.onresult = (e) => { let fin = ''; let tmp = ''; for (let i = e.resultIndex; i < e.results.length; i += 1) (e.results[i].isFinal ? (fin += e.results[i][0].transcript) : (tmp += e.results[i][0].transcript)); if (fin) base += `${fin} `; vtxt.value = base + tmp; };
+      rec.onerror = (e) => { if (e.error === 'not-allowed') { on = false; q('[data-vmsg]').textContent = 'Microphone permission was denied.'; } };
+      rec.onend = () => { if (on && el.isConnected) rec.start(); else { on = false; mic.innerHTML = '<i class="fa-solid fa-microphone"></i> Start speaking'; } }; rec.start();
+    };
+    start(); mic.innerHTML = '<i class="fa-solid fa-stop"></i> Stop'; q('[data-vmsg]').textContent = '● Listening…';
+  });
+  q('[data-vcopy]').addEventListener('click', () => copy(vtxt.value)); q('[data-vclear]').addEventListener('click', () => { vtxt.value = ''; });
+  const synth = window.speechSynthesis; const vsel = q('[data-voice]');
+  const loadVoices = () => { const vs = synth?.getVoices() || []; vsel.innerHTML = vs.map((v, i) => `<option value="${i}">${esc(v.name)} (${v.lang})</option>`).join('') || '<option>No voices found</option>'; const d = vs.findIndex((v) => /en-IN/i.test(v.lang)); if (d >= 0) vsel.value = d; };
+  if (synth) { loadVoices(); synth.onvoiceschanged = loadVoices; }
+  q('[data-play]').addEventListener('click', () => {
+    if (!synth) return (q('[data-rmsg]').textContent = 'Read aloud is not supported in this browser.');
+    synth.cancel(); const parts = chunkText(q('[data-rtxt]').value, 180).filter((p) => p.trim()); const voice = synth.getVoices()[+vsel.value]; let i = 0;
+    const next = () => { if (i >= parts.length || !el.isConnected) { q('[data-rmsg]').textContent = ''; return; } const u = new SpeechSynthesisUtterance(parts[i]); if (voice) { u.voice = voice; u.lang = voice.lang; } u.rate = +q('[data-rate]').value; i += 1; u.onend = next; q('[data-rmsg]').textContent = `Reading ${i}/${parts.length}…`; synth.speak(u); };
+    next();
+  });
+  q('[data-pause]').addEventListener('click', (e) => { if (synth.paused) { synth.resume(); e.target.textContent = 'Pause'; } else { synth.pause(); e.target.textContent = 'Resume'; } });
+  q('[data-stop]').addEventListener('click', () => { synth.cancel(); q('[data-rmsg]').textContent = ''; });
+}
+
+/* ---------- AI Assistant (talks to your Cloudflare Worker) ---------- */
+const AI_URL = 'https://calm-wood-0799.sridhar-kulkarni150.workers.dev';
+async function textFromFile(f) {
+  if (isPdf(f)) { const d = await pdfDoc(await f.arrayBuffer()); let t = ''; for (let i = 1; i <= d.numPages && t.length < 20000; i += 1) { const c = await (await d.getPage(i)).getTextContent(); t += `${c.items.map((x) => x.str).join(' ')}\n`; } return t; }
+  if (/\.docx$/i.test(f.name)) { await loadScript('https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js'); return (await window.mammoth.extractRawText({ arrayBuffer: await f.arrayBuffer() })).value; }
+  return f.text();
+}
+const mdLite = (s) => esc(s).split(/```/).map((p, i) => (i % 2 ? `<pre><code>${p.replace(/^\w*\n/, '')}</code></pre>` : p.replace(/`([^`\n]+)`/g, '<code>$1</code>').replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br />'))).join('');
+function aiTool(el) {
+  el.innerHTML = `<div class="chat-log" data-log aria-live="polite"></div>
+    <div class="row"><button class="chip" data-qp="Summarize this in simple words:\n\n">Summarize</button><button class="chip" data-qp="Explain this simply:\n\n">Explain simply</button><button class="chip" data-qp="Write a polite, professional email about: ">Write an email</button><button class="chip" data-qp="Fix the grammar and improve this text:\n\n">Improve my text</button></div>
+    <div class="chat-input"><textarea class="textarea-panel" data-in rows="2" placeholder="Ask anything… (Enter to send, Shift+Enter for a new line)" aria-label="Message"></textarea><button class="btn primary" data-send>Send</button></div>
+    <div class="row"><label class="btn"><i class="fa-solid fa-paperclip"></i> Attach file<input type="file" hidden data-file accept=".txt,.md,.csv,.json,.pdf,.docx" /></label><span class="hint grow" data-att></span><button class="chip" data-clear>New chat</button></div>`;
+  const q = (s) => $(s, el); const log = q('[data-log]'); const input = q('[data-in]'); let msgs = store.get('ai-chat', []); let attach = null; let busy = false;
+  const paint = (extra = '') => {
+    log.innerHTML = (msgs.length ? msgs.map((m, i) => `<div class="bubble ${m.role === 'user' ? 'user' : 'ai'}">${mdLite(m.show ?? m.content)}${m.role === 'assistant' ? `<div class="bubble-tools"><button class="chip" data-copy="${i}">Copy</button><button class="chip" data-canvas="${i}">Send to Canvas</button></div>` : ''}</div>`).join('') : '<p class="hint">Hi! Ask me anything, paste text to summarize or rewrite, or attach a PDF, Word or text file to ask about it.</p>') + extra;
+    log.scrollTop = log.scrollHeight;
+  };
+  const send = async () => {
+    const text = input.value.trim(); if (busy || (!text && !attach)) return;
+    let content = text || 'Please summarize this file.'; let show = content;
+    if (attach) { content += `\n\n[Attached file: ${attach.name}]\n${attach.text}`; show += `\n📎 ${attach.name}`; }
+    msgs.push({ role: 'user', content, show }); input.value = ''; attach = null; q('[data-att]').textContent = ''; busy = true; paint('<div class="bubble ai"><span class="hint">Thinking…</span></div>');
+    try {
+      const body = JSON.stringify({ messages: msgs.slice(-12).map((m, i, a) => ({ role: m.role, content: i === a.length - 1 ? m.content : m.content.slice(0, 3000) })) });
+      const r = await fetch(AI_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }); const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.error || !j.reply) throw new Error(r.status === 403 ? 'The AI only works when WizOS is opened from your website.' : j.error || `The AI returned an error (${r.status}). The free daily limit may be used up.`);
+      msgs.push({ role: 'assistant', content: j.reply }); msgs = msgs.slice(-40); store.set('ai-chat', msgs); paint();
+    } catch (e) { paint(`<div class="bubble ai err">✗ ${esc(e.message === 'Failed to fetch' ? 'Could not reach the AI. Check your internet connection.' : e.message)}</div>`); }
+    busy = false;
+  };
+  q('[data-send]').addEventListener('click', send);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+  $$('[data-qp]', el).forEach((b) => b.addEventListener('click', () => { input.value = b.dataset.qp.replace(/\\n/g, '\n'); input.focus(); }));
+  q('[data-clear]').addEventListener('click', () => { msgs = []; store.set('ai-chat', []); paint(); });
+  q('[data-file]').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f) return; q('[data-att]').textContent = 'Reading file…';
+    try { const t = await textFromFile(f); attach = { name: f.name, text: t.slice(0, 12000) }; q('[data-att]').textContent = `📎 ${f.name}${t.length > 12000 ? ' (first 12,000 characters used)' : ''}`; } catch (err) { q('[data-att]').textContent = `Could not read that file: ${err.message}`; }
+  });
+  log.addEventListener('click', (e) => {
+    const c = e.target.closest('[data-copy]'); const k = e.target.closest('[data-canvas]');
+    if (c) copy(msgs[+c.dataset.copy].content);
+    if (k) { blocks.unshift({ id: Date.now(), type: 'text', data: msgs[+k.dataset.canvas].content }); saveBlocks(); if (canvasRoot?.isConnected) renderCanvas(); toast('Saved to Canvas'); }
+  });
+  paint();
+}
+
 const TOOLS = [
+  { id: 'ai', name: 'AI Assistant', icon: 'fa-brain', group: 'AI & Writing', render: aiTool },
   { id: 'media', name: 'Media Converter', icon: 'fa-photo-film', group: 'Image & Media', render: mediaTool },
   { id: 'bg', name: 'Background Remover', icon: 'fa-wand-magic-sparkles', group: 'Image & Media', render: bgTool },
   { id: 'docs', name: 'Document Tools', icon: 'fa-file-pdf', group: 'Documents', render: docTool },
   { id: 'compare', name: 'Compare', icon: 'fa-code-compare', group: 'Documents', render: compareTool },
+  { id: 'write', name: 'Translate & Grammar', icon: 'fa-language', group: 'Writing & Language', render: writeTool },
+  { id: 'speak', name: 'Read & Speak', icon: 'fa-microphone-lines', group: 'Writing & Language', render: speakTool },
   { id: 'qr', name: 'QR Generator', icon: 'fa-qrcode', group: 'Quick Utilities', render: qrTool },
   { id: 'rec', name: 'Screen Recorder', icon: 'fa-video', group: 'Quick Utilities', render: recorderTool },
   { id: 'pad', name: 'Scratchpad', icon: 'fa-note-sticky', group: 'Quick Utilities', render: padTool },
