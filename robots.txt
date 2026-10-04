@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://sridhar-creatork.github.io/Tech-And-Tools/sitemap.xml
