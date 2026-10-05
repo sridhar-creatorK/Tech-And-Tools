@@ -86,14 +86,22 @@ const thumbOf = (c) => {
 
 /* ffmpeg.wasm (video/audio + rare image formats), loaded on first use */
 let ffP = null;
+const FF_CORE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+const asBlobURL = async (url, type) => { const r = await fetch(url); if (!r.ok) throw new Error(`${url.split('/').pop()} not found (${r.status})`); return URL.createObjectURL(new Blob([await r.arrayBuffer()], { type })); };
+const ffFetchFile = async (f) => new Uint8Array(await f.arrayBuffer());
+async function ffViaOwnFiles() { // needs vendor/ffmpeg.js and vendor/814.ffmpeg.js uploaded next to index.html (a browser will not start a worker from another website)
+  await loadScript('vendor/ffmpeg.js'); const ff = new window.FFmpegWASM.FFmpeg();
+  await ff.load({ coreURL: await asBlobURL(`${FF_CORE}/ffmpeg-core.js`, 'text/javascript'), wasmURL: await asBlobURL(`${FF_CORE}/ffmpeg-core.wasm`, 'application/wasm') });
+  return { ff, fetchFile: ffFetchFile };
+}
+async function ffViaCdn() {
+  const { FFmpeg } = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/+esm'); const ff = new FFmpeg();
+  await ff.load({ coreURL: await asBlobURL(`${FF_CORE}/ffmpeg-core.js`, 'text/javascript'), wasmURL: await asBlobURL(`${FF_CORE}/ffmpeg-core.wasm`, 'application/wasm'), classWorkerURL: await asBlobURL('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js', 'text/javascript') });
+  return { ff, fetchFile: ffFetchFile };
+}
 function getFF() {
-  return (ffP ||= (async () => {
-    const { FFmpeg } = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/+esm');
-    const { toBlobURL, fetchFile } = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/+esm');
-    const ff = new FFmpeg(); const core = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
-    await ff.load({ coreURL: await toBlobURL(`${core}/ffmpeg-core.js`, 'text/javascript'), wasmURL: await toBlobURL(`${core}/ffmpeg-core.wasm`, 'application/wasm'), classWorkerURL: await toBlobURL('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js', 'text/javascript') });
-    return { ff, fetchFile };
-  })().catch((e) => { ffP = null; throw new Error(`Could not load the converter (needs internet): ${e.message}`); }));
+  return (ffP ||= (async () => { try { return await ffViaOwnFiles(); } catch (e1) { try { return await ffViaCdn(); } catch (e2) { throw new Error(`${e1.message}; ${e2.message}`); } } })()
+    .catch((e) => { ffP = null; throw new Error(`The video converter could not start. Check your internet connection and that the vendor folder is uploaded (${e.message})`); }));
 }
 async function ffRun(file, args, outName, onP) {
   const { ff, fetchFile } = await getFF(); const inn = `in.${(file.name.split('.').pop() || 'bin').replace(/\W/g, '')}`;
@@ -518,7 +526,9 @@ function bgTool(el) {
     [$('[data-o]', el).src, $('[data-r]', el).src].forEach((u) => u?.startsWith('blob:') && URL.revokeObjectURL(u));
     $('[data-o]', el).src = URL.createObjectURL(f); $('[data-o]', el).hidden = false; $('[data-r]', el).hidden = true; $('[data-dl]', el).hidden = true; msg.textContent = 'Removing background… this can take a minute the first time.';
     try {
-      const { removeBackground } = await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.5/+esm'); const blob = await removeBackground(f); const url = URL.createObjectURL(blob);
+      let blob; try { const m = await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.5/+esm'); blob = await m.removeBackground(f); } catch (e1) {
+        msg.textContent = 'Trying the backup engine…'; const m = await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.0.0/dist/index.mjs'); blob = await m.removeBackground(f, { publicPath: 'https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.0.0/dist/' });
+      } const url = URL.createObjectURL(blob);
       $('[data-r]', el).src = url; $('[data-r]', el).hidden = false; const dl = $('[data-dl]', el); dl.href = url; dl.download = `${f.name.replace(/\.[^.]+$/, '')}-nobg.png`; dl.removeAttribute('data-saved'); dl.hidden = false; msg.textContent = 'Done.';
     } catch (e) { msg.textContent = `Could not run the model: ${e.message}`; } finally { bgBusy = false; }
   }, 'image/*');
@@ -598,7 +608,7 @@ async function aiChain(f, providers, call, chars) {
 const within = (pr, ms) => Promise.race([pr, new Promise((_, rej) => { setTimeout(() => rej(new Error('timeout')), ms); })]); // a stuck browser API must never block the next service
 const withSystem = (messages, system) => (system && messages.length ? [{ role: messages[0].role, content: `${system}\n\n${messages[0].content}` }, ...messages.slice(1)] : messages);
 const aiWorker = (id, name, url) => ({
-  id, name,
+  id, name, timeout: 40000,
   async run({ messages, system }, signal) {
     const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: withSystem(messages, system) }), signal });
     const j = await r.json().catch(() => ({}));
