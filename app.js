@@ -86,9 +86,13 @@ const thumbOf = (c) => {
 
 /* ffmpeg.wasm (video/audio + rare image formats), loaded on first use */
 let ffP = null;
-// FFmpeg core: use a version-pinned UMD build with all three required core files.
-// unpkg is the primary source because the 0.12.6 UMD package publishes
-// ffmpeg-core.js, ffmpeg-core.wasm and ffmpeg-core.worker.js together.
+// IMPORTANT: @ffmpeg/core 0.12.6 (single-thread) publishes TWO core assets:
+//   ffmpeg-core.js + ffmpeg-core.wasm
+// The separate ffmpeg-core.worker.js file belongs to the multi-thread core
+// and is NOT a published artifact of the single-thread @ffmpeg/core package.
+// Our local vendor/814.ffmpeg.js is the FFmpeg controller worker and is the
+// worker that @ffmpeg/ffmpeg itself starts. Do not request a nonexistent
+// ffmpeg-core.worker.js here.
 const FF_CORE_SOURCES = [
   'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd',
   'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd'
@@ -101,20 +105,17 @@ async function loadFFmpegCore(ff) {
   for (const base of FF_CORE_SOURCES) {
     const urls = {
       core: `${base}/ffmpeg-core.js`,
-      wasm: `${base}/ffmpeg-core.wasm`,
-      worker: `${base}/ffmpeg-core.worker.js`
+      wasm: `${base}/ffmpeg-core.wasm`
     };
     const blobs = [];
     try {
-      // Fetch the matching JS/WASM/worker files from one version-pinned source.
+      // These two files are the complete single-thread @ffmpeg/core package.
       const coreURL = await asBlobURL(urls.core, 'text/javascript'); blobs.push(coreURL);
       const wasmURL = await asBlobURL(urls.wasm, 'application/wasm'); blobs.push(wasmURL);
-      const workerURL = await asBlobURL(urls.worker, 'text/javascript'); blobs.push(workerURL);
-      await ff.load({ coreURL, wasmURL, workerURL });
+      await ff.load({ coreURL, wasmURL });
       return;
     } catch (e) {
       lastError = e;
-      // Try the second pinned CDN if the first CDN is unavailable or returns a bad asset.
       for (const u of blobs) URL.revokeObjectURL(u);
     }
   }
@@ -122,7 +123,8 @@ async function loadFFmpegCore(ff) {
 }
 function getFF() {
   return (ffP ||= (async () => {
-    // vendor/ffmpeg.js starts its helper (814.ffmpeg.js) from the same folder, so both files must sit side by side.
+    // vendor/ffmpeg.js starts its bundled controller worker (814.ffmpeg.js)
+    // from the same folder, so both files must remain side by side.
     for (const file of ['vendor/ffmpeg.js', 'vendor/814.ffmpeg.js']) { const r = await fetch(file, { method: 'HEAD' }); if (!r.ok) throw new Error(`${file} is missing from your site (error ${r.status}). Upload it to the vendor folder.`); }
     await loadScript('vendor/ffmpeg.js'); const ff = new window.FFmpegWASM.FFmpeg();
     await loadFFmpegCore(ff);
