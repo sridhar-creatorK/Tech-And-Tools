@@ -86,56 +86,63 @@ const thumbOf = (c) => {
 
 /* ffmpeg.wasm (video/audio + rare image formats), loaded on first use */
 let ffP = null;
-// IMPORTANT: @ffmpeg/core 0.12.6 (single-thread) publishes TWO core assets:
-//   ffmpeg-core.js + ffmpeg-core.wasm
-// The separate ffmpeg-core.worker.js file belongs to the multi-thread core
-// and is NOT a published artifact of the single-thread @ffmpeg/core package.
-// Our local vendor/814.ffmpeg.js is the FFmpeg controller worker and is the
-// worker that @ffmpeg/ffmpeg itself starts. Do not request a nonexistent
-// ffmpeg-core.worker.js here.
-const FF_CORE_SOURCES = [
-  'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd',
-  'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd'
-];
+
+/*
+ * FFmpeg WASM compatibility build:
+ *   @ffmpeg/ffmpeg 0.11.6  -> vendor/ffmpeg.min.js
+ *   @ffmpeg/core-st 0.11.1 -> vendor/ffmpeg-core.js
+ *                              vendor/ffmpeg-core.wasm
+ *                              vendor/ffmpeg-core.worker.js
+ *
+ * Keep these three core files from the SAME core-st 0.11.1 package.
+ * Do not mix them with @ffmpeg/core 0.12.x files.
+ */
+const FF_WRAPPER = 'vendor/ffmpeg.min.js';
+const FF_CORE = 'vendor/ffmpeg-core.js';
 const errText = (e) => String((e && (e.message || e.reason || e.type)) || e || 'unknown error');
-const asBlobURL = async (url, type) => { const r = await fetch(url, { cache: 'force-cache' }); if (!r.ok) throw new Error(`${url.split('/').pop()} could not be loaded (error ${r.status})`); return URL.createObjectURL(new Blob([await r.arrayBuffer()], { type })); };
 const ffFetchFile = async (f) => new Uint8Array(await f.arrayBuffer());
-async function loadFFmpegCore(ff) {
-  let lastError;
-  for (const base of FF_CORE_SOURCES) {
-    const urls = {
-      core: `${base}/ffmpeg-core.js`,
-      wasm: `${base}/ffmpeg-core.wasm`
-    };
-    const blobs = [];
-    try {
-      // These two files are the complete single-thread @ffmpeg/core package.
-      const coreURL = await asBlobURL(urls.core, 'text/javascript'); blobs.push(coreURL);
-      const wasmURL = await asBlobURL(urls.wasm, 'application/wasm'); blobs.push(wasmURL);
-      await ff.load({ coreURL, wasmURL });
-      return;
-    } catch (e) {
-      lastError = e;
-      for (const u of blobs) URL.revokeObjectURL(u);
-    }
-  }
-  throw lastError || new Error('No FFmpeg core source is available.');
-}
-function getFF() {
+
+async function getFF() {
   return (ffP ||= (async () => {
-    // vendor/ffmpeg.js starts its bundled controller worker (814.ffmpeg.js)
-    // from the same folder, so both files must remain side by side.
-    for (const file of ['vendor/ffmpeg.js', 'vendor/814.ffmpeg.js']) { const r = await fetch(file, { method: 'HEAD' }); if (!r.ok) throw new Error(`${file} is missing from your site (error ${r.status}). Upload it to the vendor folder.`); }
-    await loadScript('vendor/ffmpeg.js'); const ff = new window.FFmpegWASM.FFmpeg();
-    await loadFFmpegCore(ff);
-    return { ff, fetchFile: ffFetchFile };
-  })().catch((e) => { ffP = null; throw new Error(`The video converter could not start: ${errText(e)}`); }));
+    // Load the 0.11.6 wrapper exactly once. It exposes window.FFmpeg.
+    await loadScript(FF_WRAPPER);
+    if (!window.FFmpeg || typeof window.FFmpeg.createFFmpeg !== 'function') {
+      throw new Error('FFmpeg 0.11.6 wrapper did not load correctly. Check vendor/ffmpeg.min.js.');
+    }
+
+    // corePath must be a real URL/path, not a blob URL. The 0.11 wrapper
+    // uses it to locate the matching WASM and worker files.
+    const corePath = new URL(FF_CORE, document.baseURI).href;
+    const ff = window.FFmpeg.createFFmpeg({
+      log: false,
+      corePath,
+    });
+
+    await ff.load();
+    return { ff, fetchFile: window.FFmpeg.fetchFile || ffFetchFile };
+  })().catch((e) => {
+    ffP = null;
+    throw new Error(`The video converter could not start: ${errText(e)}`);
+  }));
 }
+
 async function ffRun(file, args, outName, onP) {
-  const { ff, fetchFile } = await getFF(); const inn = `in.${(file.name.split('.').pop() || 'bin').replace(/\W/g, '')}`;
-  await ff.writeFile(inn, await fetchFile(file)); const h = ({ progress }) => onP?.(Math.min(1, Math.max(0, progress))); ff.on('progress', h);
-  try { await ff.exec(['-i', inn, ...args, outName]); const d = await ff.readFile(outName); return new Blob([d]); } finally { ff.off('progress', h); try { await ff.deleteFile(inn); await ff.deleteFile(outName); } catch { /* ignore */ } }
+  const { ff, fetchFile } = await getFF();
+  const ext = (file.name.split('.').pop() || 'bin').replace(/\W/g, '');
+  const inn = `in.${ext}`;
+
+  ff.setProgress(({ ratio }) => onP?.(Math.min(1, Math.max(0, ratio || 0))));
+  await ff.FS('writeFile', inn, await fetchFile(file));
+  try {
+    await ff.run('-i', inn, ...args, outName);
+    const d = ff.FS('readFile', outName);
+    return new Blob([d]);
+  } finally {
+    try { ff.FS('unlink', inn); } catch { /* ignore */ }
+    try { ff.FS('unlink', outName); } catch { /* ignore */ }
+  }
 }
+
 function bmpBlob(c) {
   const w = c.width; const h = c.height; const d = c.getContext('2d').getImageData(0, 0, w, h).data; const rs = w * 4; const buf = new ArrayBuffer(54 + rs * h); const v = new DataView(buf); const u = new Uint8Array(buf);
   v.setUint16(0, 0x4d42, true); v.setUint32(2, 54 + rs * h, true); v.setUint32(10, 54, true); v.setUint32(14, 40, true); v.setInt32(18, w, true); v.setInt32(22, h, true); v.setUint16(26, 1, true); v.setUint16(28, 32, true); v.setUint32(34, rs * h, true);
