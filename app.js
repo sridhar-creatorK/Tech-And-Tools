@@ -95,7 +95,10 @@ function getFF() {
     // vendor/ffmpeg.js starts its helper (814.ffmpeg.js) from the same folder, so both files must sit side by side.
     for (const file of ['vendor/ffmpeg.js', 'vendor/814.ffmpeg.js']) { const r = await fetch(file, { method: 'HEAD' }); if (!r.ok) throw new Error(`${file} is missing from your site (error ${r.status}). Upload it to the vendor folder.`); }
     await loadScript('vendor/ffmpeg.js'); const ff = new window.FFmpegWASM.FFmpeg();
-    await ff.load({ coreURL: await asBlobURL(`${FF_CORE}/ffmpeg-core.js`, 'text/javascript'), wasmURL: await asBlobURL(`${FF_CORE}/ffmpeg-core.wasm`, 'application/wasm') });
+    const coreURL = await asBlobURL(`${FF_CORE}/ffmpeg-core.js`, 'text/javascript');
+    const wasmURL = await asBlobURL(`${FF_CORE}/ffmpeg-core.wasm`, 'application/wasm');
+    const workerURL = await asBlobURL(`${FF_CORE}/ffmpeg-core.worker.js`, 'text/javascript');
+    await ff.load({ coreURL, wasmURL, workerURL });
     return { ff, fetchFile: ffFetchFile };
   })().catch((e) => { ffP = null; throw new Error(`The video converter could not start: ${errText(e)}`); }));
 }
