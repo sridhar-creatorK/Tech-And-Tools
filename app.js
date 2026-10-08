@@ -87,21 +87,17 @@ const thumbOf = (c) => {
 /* ffmpeg.wasm (video/audio + rare image formats), loaded on first use */
 let ffP = null;
 const FF_CORE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
-const asBlobURL = async (url, type) => { const r = await fetch(url); if (!r.ok) throw new Error(`${url.split('/').pop()} not found (${r.status})`); return URL.createObjectURL(new Blob([await r.arrayBuffer()], { type })); };
+const errText = (e) => String((e && (e.message || e.reason || e.type)) || e || 'unknown error');
+const asBlobURL = async (url, type) => { const r = await fetch(url); if (!r.ok) throw new Error(`${url.split('/').pop()} could not be loaded (error ${r.status})`); return URL.createObjectURL(new Blob([await r.arrayBuffer()], { type })); };
 const ffFetchFile = async (f) => new Uint8Array(await f.arrayBuffer());
-async function ffViaOwnFiles() { // needs vendor/ffmpeg.js and vendor/814.ffmpeg.js uploaded next to index.html (a browser will not start a worker from another website)
-  await loadScript('vendor/ffmpeg.js'); const ff = new window.FFmpegWASM.FFmpeg();
-  await ff.load({ coreURL: await asBlobURL(`${FF_CORE}/ffmpeg-core.js`, 'text/javascript'), wasmURL: await asBlobURL(`${FF_CORE}/ffmpeg-core.wasm`, 'application/wasm') });
-  return { ff, fetchFile: ffFetchFile };
-}
-async function ffViaCdn() {
-  const { FFmpeg } = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/+esm'); const ff = new FFmpeg();
-  await ff.load({ coreURL: await asBlobURL(`${FF_CORE}/ffmpeg-core.js`, 'text/javascript'), wasmURL: await asBlobURL(`${FF_CORE}/ffmpeg-core.wasm`, 'application/wasm'), classWorkerURL: await asBlobURL('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js', 'text/javascript') });
-  return { ff, fetchFile: ffFetchFile };
-}
 function getFF() {
-  return (ffP ||= (async () => { try { return await ffViaOwnFiles(); } catch (e1) { try { return await ffViaCdn(); } catch (e2) { throw new Error(`${e1.message}; ${e2.message}`); } } })()
-    .catch((e) => { ffP = null; throw new Error(`The video converter could not start. Check your internet connection and that the vendor folder is uploaded (${e.message})`); }));
+  return (ffP ||= (async () => {
+    // vendor/ffmpeg.js starts its helper (814.ffmpeg.js) from the same folder, so both files must sit side by side.
+    for (const file of ['vendor/ffmpeg.js', 'vendor/814.ffmpeg.js']) { const r = await fetch(file, { method: 'HEAD' }); if (!r.ok) throw new Error(`${file} is missing from your site (error ${r.status}). Upload it to the vendor folder.`); }
+    await loadScript('vendor/ffmpeg.js'); const ff = new window.FFmpegWASM.FFmpeg();
+    await ff.load({ coreURL: await asBlobURL(`${FF_CORE}/ffmpeg-core.js`, 'text/javascript'), wasmURL: await asBlobURL(`${FF_CORE}/ffmpeg-core.wasm`, 'application/wasm') });
+    return { ff, fetchFile: ffFetchFile };
+  })().catch((e) => { ffP = null; throw new Error(`The video converter could not start: ${errText(e)}`); }));
 }
 async function ffRun(file, args, outName, onP) {
   const { ff, fetchFile } = await getFF(); const inn = `in.${(file.name.split('.').pop() || 'bin').replace(/\W/g, '')}`;
@@ -380,7 +376,7 @@ function docTool(el) {
 
 /* ---------- Footer pages (About / Contact / Privacy) ---------- */
 const CONTACT_EMAIL = ''; // put your public contact email here, e.g. 'hello@example.com'
-const REPO_URL = 'https://github.com/sridhar-creatork/Tech-And-Tools';
+const REPO_URL = 'https://github.com/sridhar-creatorK/Tech-And-Tools';
 const INFO = {
   about: ['About WizOS', '<p>WizOS is a free workspace of everyday tech tools — documents, media, writing and AI helpers — in one place. It is part of <b>Tech Tool Wiz</b>, made by Sridhar Kulkarni.</p><p>Most tools run entirely inside your browser, so your files stay on your device.</p>'],
   contact: ['Contact', CONTACT_EMAIL ? `<p>Questions, ideas or bugs? Email <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.</p>` : `<p>Found a bug or have an idea? Please open an issue on the <a href="${REPO_URL}/issues" target="_blank" rel="noopener noreferrer">project page on GitHub</a>.</p>`],
@@ -557,7 +553,7 @@ function padTool(el) {
    offline or out of quota, the next backup takes over automatically (the person never has to retry).
    Each feature also has its own daily limits (AI_LIMITS). Limits are counted in the visitor's browser
    to keep usage fair; real server-side limits belong in your Cloudflare Worker. */
-const AI_URL = 'https://calm-wood-0799.sridhar-kulkarni150.workers.dev'; // MAIN chat AI: your Cloudflare Worker
+const AI_URL = 'https://wizos-ai.thegamer-sridhar.workers.dev'; // MAIN chat AI: your Cloudflare Worker
 const POLL_URL = 'https://text.pollinations.ai/openai'; // free backup AI (no key needed)
 const AI_LIMITS = {
   assistant: { label: 'the AI Assistant', noun: 'messages', req: 40, chars: 80000, max: 26000, gap: 1200 },
@@ -950,14 +946,14 @@ const TOOLS = [
   { id: 'ai', name: 'AI Assistant', icon: 'fa-brain', group: 'AI & Writing', render: aiTool },
   { id: 'media', name: 'Media Converter', icon: 'fa-photo-film', group: 'Image & Media', render: mediaTool },
   { id: 'bg', name: 'Background Remover', icon: 'fa-wand-magic-sparkles', group: 'Image & Media', render: bgTool },
-  { id: 'docs', name: 'Document Tools', icon: 'fa-file-pdf', group: 'Documents', render: docTool },
+  { id: 'docs', name: 'Document Toolkit', icon: 'fa-file-pdf', group: 'Documents', render: docTool },
   { id: 'compare', name: 'Compare', icon: 'fa-code-compare', group: 'Documents', render: compareTool },
   { id: 'write', name: 'Translate & Grammar', icon: 'fa-language', group: 'Writing & Language', render: writeTool },
   { id: 'speak', name: 'Read & Speak', icon: 'fa-microphone-lines', group: 'Writing & Language', render: speakTool },
   { id: 'letter', name: 'Letter & Form Writer', icon: 'fa-envelope-open-text', group: 'AI & Writing', render: letterTool },
   { id: 'tricks', name: 'Web Tricks', icon: 'fa-terminal', group: 'Learn', render: tricksTool },
   { id: 'qr', name: 'QR Generator', icon: 'fa-qrcode', group: 'Quick Utilities', render: qrTool },
-  { id: 'rec', name: 'Screen Recorder', icon: 'fa-video', group: 'Quick Utilities', render: recorderTool },
+  { id: 'rec', name: 'Display Recorder', icon: 'fa-video', group: 'Quick Utilities', render: recorderTool },
   { id: 'pad', name: 'Scratchpad', icon: 'fa-note-sticky', group: 'Quick Utilities', render: padTool },
 ];
 const toolById = (id) => TOOLS.find((t) => t.id === id);
