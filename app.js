@@ -86,19 +86,46 @@ const thumbOf = (c) => {
 
 /* ffmpeg.wasm (video/audio + rare image formats), loaded on first use */
 let ffP = null;
-const FF_CORE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+// FFmpeg core: use a version-pinned UMD build with all three required core files.
+// unpkg is the primary source because the 0.12.6 UMD package publishes
+// ffmpeg-core.js, ffmpeg-core.wasm and ffmpeg-core.worker.js together.
+const FF_CORE_SOURCES = [
+  'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd',
+  'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd'
+];
 const errText = (e) => String((e && (e.message || e.reason || e.type)) || e || 'unknown error');
-const asBlobURL = async (url, type) => { const r = await fetch(url); if (!r.ok) throw new Error(`${url.split('/').pop()} could not be loaded (error ${r.status})`); return URL.createObjectURL(new Blob([await r.arrayBuffer()], { type })); };
+const asBlobURL = async (url, type) => { const r = await fetch(url, { cache: 'force-cache' }); if (!r.ok) throw new Error(`${url.split('/').pop()} could not be loaded (error ${r.status})`); return URL.createObjectURL(new Blob([await r.arrayBuffer()], { type })); };
 const ffFetchFile = async (f) => new Uint8Array(await f.arrayBuffer());
+async function loadFFmpegCore(ff) {
+  let lastError;
+  for (const base of FF_CORE_SOURCES) {
+    const urls = {
+      core: `${base}/ffmpeg-core.js`,
+      wasm: `${base}/ffmpeg-core.wasm`,
+      worker: `${base}/ffmpeg-core.worker.js`
+    };
+    const blobs = [];
+    try {
+      // Fetch the matching JS/WASM/worker files from one version-pinned source.
+      const coreURL = await asBlobURL(urls.core, 'text/javascript'); blobs.push(coreURL);
+      const wasmURL = await asBlobURL(urls.wasm, 'application/wasm'); blobs.push(wasmURL);
+      const workerURL = await asBlobURL(urls.worker, 'text/javascript'); blobs.push(workerURL);
+      await ff.load({ coreURL, wasmURL, workerURL });
+      return;
+    } catch (e) {
+      lastError = e;
+      // Try the second pinned CDN if the first CDN is unavailable or returns a bad asset.
+      for (const u of blobs) URL.revokeObjectURL(u);
+    }
+  }
+  throw lastError || new Error('No FFmpeg core source is available.');
+}
 function getFF() {
   return (ffP ||= (async () => {
     // vendor/ffmpeg.js starts its helper (814.ffmpeg.js) from the same folder, so both files must sit side by side.
     for (const file of ['vendor/ffmpeg.js', 'vendor/814.ffmpeg.js']) { const r = await fetch(file, { method: 'HEAD' }); if (!r.ok) throw new Error(`${file} is missing from your site (error ${r.status}). Upload it to the vendor folder.`); }
     await loadScript('vendor/ffmpeg.js'); const ff = new window.FFmpegWASM.FFmpeg();
-    const coreURL = await asBlobURL(`${FF_CORE}/ffmpeg-core.js`, 'text/javascript');
-    const wasmURL = await asBlobURL(`${FF_CORE}/ffmpeg-core.wasm`, 'application/wasm');
-    const workerURL = await asBlobURL(`${FF_CORE}/ffmpeg-core.worker.js`, 'text/javascript');
-    await ff.load({ coreURL, wasmURL, workerURL });
+    await loadFFmpegCore(ff);
     return { ff, fetchFile: ffFetchFile };
   })().catch((e) => { ffP = null; throw new Error(`The video converter could not start: ${errText(e)}`); }));
 }
