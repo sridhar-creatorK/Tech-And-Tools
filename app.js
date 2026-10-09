@@ -87,19 +87,22 @@ const thumbOf = (c) => {
 /* ffmpeg.wasm (video/audio + rare image formats), loaded on first use */
 let ffP = null;
 const FF_WRAPPER = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js';
-// Single-thread 0.11.1 core avoids the SIMD build that fails on older CPUs.
-// Keep core files on the same CDN package path: the repo's previous files were HTML error pages.
-const FF_CORE = 'https://unpkg.com/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js';
+const FF_CORE = new URL('vendor/ffmpeg-core.js', document.baseURI).href;
 const errText = (e) => String((e && (e.message || e.reason || e.type)) || e || 'unknown error');
 const ffFetchFile = async (f) => new Uint8Array(await f.arrayBuffer());
 function getFF() {
   return (ffP ||= (async () => {
+    // Use the official 0.11.6 wrapper from jsDelivr so its matching webpack chunk
+    // is resolved from the CDN. The non-SIMD core files remain hosted in this repo.
+    for (const file of ['vendor/ffmpeg-core.js', 'vendor/ffmpeg-core.wasm', 'vendor/ffmpeg-core.worker.js']) {
+      const r = await fetch(file, { method: 'HEAD' });
+      if (!r.ok) throw new Error(`${file} is missing from your site (HTTP ${r.status}). Check the vendor folder and filename.`);
+    }
     await loadScript(FF_WRAPPER);
     if (!window.FFmpeg || typeof window.FFmpeg.createFFmpeg !== 'function') {
-      throw new Error('FFmpeg 0.11.6 wrapper did not initialize. Check the CDN connection.');
+      throw new Error('The official FFmpeg 0.11.6 wrapper did not initialize. Check the network/CDN connection.');
     }
-    // core-st is the single-thread core; mainName is required for this package.
-    const ff = window.FFmpeg.createFFmpeg({ log: false, mainName: 'main', corePath: FF_CORE });
+    const ff = window.FFmpeg.createFFmpeg({ log: false, corePath: FF_CORE });
     await ff.load();
     return { ff, fetchFile: window.FFmpeg.fetchFile || ffFetchFile };
   })().catch((e) => { ffP = null; throw new Error(`The video converter could not start: ${errText(e)}`); }));
@@ -722,28 +725,6 @@ async function ltCheck(text, lang, signal) {
   }
   return matches;
 }
-// LanguageTool does not catch every run-on sentence. Add a conservative English-only
-// punctuation hint when a new independent clause starts with a common subject word.
-function addPunctuationHints(text, matches, lang) {
-  if (!(lang === 'auto' || /^en(?:-|$)/i.test(lang))) return matches;
-  const hints = [];
-  const boundary = /\s+(?=(?:I|You|We|They|He|She|It|This|That|These|Those|My|Our|Their|There|The|A|An)\b)/g;
-  let m;
-  while ((m = boundary.exec(text))) {
-    const start = m.index;
-    const before = text.slice(0, start).trimEnd();
-    const after = text.slice(start + m[0].length);
-    if (!before || !after || /[.!?;:,]$/.test(before)) continue;
-    // Avoid tiny fragments and boundaries inside a phrase such as "oranges and I".
-    if (!/[A-Za-z0-9]$/.test(before) || /\b(?:and|or|but|because|although|while|when|if|that|which|who|with|for|to|of|in|on|at|by)$/i.test(before)) continue;
-    const firstSentence = before.split(/[.!?\n]+/).pop().trim();
-    if (firstSentence.split(/\s+/).length < 2) continue;
-    const len = m[0].length;
-    if (matches.some((x) => start < x.offset + x.length && start + len > x.offset)) continue;
-    hints.push({ offset: start, length: len, message: 'Possible missing punctuation between sentences.', replacements: [{ value: '. ' }], rule: { id: 'WIZOS_POSSIBLE_RUN_ON', issueType: 'typographical' } });
-  }
-  return matches.concat(hints).sort((a, b) => a.offset - b.offset);
-}
 function writeTool(el) {
   const opt = (sel) => LANGS.map(([c, n]) => `<option value="${c}"${c === sel ? ' selected' : ''}>${n}</option>`).join('');
   el.innerHTML = `<div class="tabs"><button class="tab is-on" data-m="tr">Translate</button><button class="tab" data-m="gr">Grammar check</button></div>
@@ -751,7 +732,7 @@ function writeTool(el) {
     <textarea class="textarea-panel" data-src placeholder="Paste or type your text — long documents are fine" aria-label="Text to translate"></textarea>
     <div class="row"><button class="btn primary" data-tgo>Translate</button><span class="hint" data-tmsg></span></div>
     <textarea class="textarea-panel" data-dst readonly placeholder="Translation appears here" aria-label="Translation"></textarea><div class="row"><button class="btn" data-tcopy>Copy translation</button><span class="hint" data-tmeter></span></div></section>
-  <section data-p="gr" class="stack-gap" hidden><div class="row"><select class="select-field" data-glang aria-label="Language"><option value="en-US" selected>English (US)</option><option value="auto">Detect language</option><option value="en-GB">English (UK)</option><option value="de-DE">German</option><option value="fr">French</option><option value="es">Spanish</option><option value="it">Italian</option><option value="pt-PT">Portuguese</option><option value="nl">Dutch</option></select></div>
+  <section data-p="gr" class="stack-gap" hidden><div class="row"><select class="select-field" data-glang aria-label="Language"><option value="auto">Detect language</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="de-DE">German</option><option value="fr">French</option><option value="es">Spanish</option><option value="it">Italian</option><option value="pt-PT">Portuguese</option><option value="nl">Dutch</option></select></div>
     <textarea class="textarea-panel" data-gtxt placeholder="Paste your text to check spelling and grammar" aria-label="Text to check"></textarea>
     <div class="row"><button class="btn primary" data-ggo>Check grammar</button><button class="btn" data-gfix>Fix all</button><button class="btn" data-gcopy>Copy text</button><span class="hint" data-gmsg></span></div><div class="list" data-gout></div>
     <p class="hint" data-gmeter></p>
@@ -788,7 +769,7 @@ function writeTool(el) {
     gBusy = true; q('[data-ggo]').disabled = true; gmsg('Checking…');
     try {
       const { value, via } = await aiChain('grammar', grammarChain(), { text, lang: q('[data-glang]').value, note: gmsg }, text.length);
-      if (value.kind === 'matches') { matches = addPunctuationHints(text, value.matches, q('[data-glang]').value); paintMatches(); gmsg(`${matches.length ? `${matches.length} issue(s) found` : 'All good'} · ${via}`); }
+      if (value.kind === 'matches') { matches = value.matches; paintMatches(); gmsg(`${matches.length ? `${matches.length} issue(s) found` : 'All good'} · ${via}`); }
       else { matches = []; paintAiFix(text, value.text.trim()); gmsg(`Suggested corrections shown · ${via}`); }
     } catch (e) { gmsg(`✗ ${e.message}`); } finally { gBusy = false; q('[data-ggo]').disabled = false; meters(); }
   };
@@ -958,25 +939,75 @@ const RECIPES = [
   { t: 'Start fresh on a site', g: 'Clear one site’s saved data when it’s misbehaving.', s: ['Press F12 and open the Application tab.', 'Choose Storage in the left list.', 'Click “Clear site data”, then reload.'] },
 ];
 function tricksTool(el) {
-  el.innerHTML = `<div class="tabs"><button class="tab is-on" data-m="rc">Recipes</button><button class="tab" data-m="pr">Practice page</button><button class="tab" data-m="ask">Ask the coach</button></div>
-  <section data-p="rc" class="stack-gap"><input class="field" data-find placeholder="Search recipes — dino, popup, password…" aria-label="Search recipes" /><p class="hint">Open Developer Tools with F12 (or Ctrl + Shift + I). Right-click → Inspect also works. These tricks change only what you see on your own screen.</p><div data-list class="stack-gap"></div></section>
-  <section data-p="pr" class="stack-gap" hidden><p class="hint">A safe pretend website to practise on. Press F12 and try the missions below.</p>
-    <div class="practice-site" data-site><div class="practice-popup" data-pop><b>Subscribe now!</b><br />This box is blocking the shop. (Mission 2: remove it with Inspect.)</div><h3 data-shop>Joe’s Bakery</h3><p>Fresh bread: <b data-price>$5.00</b></p><p><label>Password: <input type="password" class="field" value="MySecret123" /></label></p></div>
-    <ol class="mission"><li>Right-click the price → Inspect → double-click the text → change it to $1.00.</li><li>Right-click the pop-up → Inspect → press Delete.</li><li>Inspect the password box and change type="password" to type="text".</li><li>Console: <code>document.body.style.background = 'pink'</code></li></ol><div class="row"><button class="btn" data-reset>Reset practice page</button></div></section>
-  <section data-p="ask" class="stack-gap" hidden><div class="row"><button class="chip" data-ex="How do I see a website’s colours using Developer Tools?">Find colours</button><button class="chip" data-ex="How do I find out why a web page is slow?">Page is slow</button><button class="chip" data-ex="How do I take a full-page screenshot using Developer Tools?">Full-page screenshot</button></div>
-    <textarea class="textarea-panel small" data-q placeholder="Describe the site or game and what you want to do…"></textarea><div class="row"><button class="btn primary" data-ask>Ask</button><span class="hint" data-msg></span></div><div class="panel-card form-out" data-ans>Answers appear here.</div></section>`;
-  const q = (s) => $(s, el);
-  $$('[data-m]', el).forEach((t) => t.addEventListener('click', () => { $$('[data-m]', el).forEach((x) => x.classList.toggle('is-on', x === t)); $$('[data-p]', el).forEach((p) => { p.hidden = p.dataset.p !== t.dataset.m; }); }));
-  const paint = (f = '') => {
-    q('[data-list]').innerHTML = RECIPES.map((r, i) => [r, i]).filter(([r]) => `${r.t} ${r.g}`.toLowerCase().includes(f.toLowerCase())).map(([r, i]) => `<details class="recipe"><summary>${esc(r.t)}</summary><p>${esc(r.g)}</p><ol>${r.s.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>${r.c ? `<pre class="css-out">${esc(r.c)}</pre><button class="chip" data-cp="${i}">Copy code</button>` : ''}</details>`).join('') || '<p class="hint">No recipe matches.</p>';
+  el.innerHTML = `<div class="tabs"><button class="tab is-on" data-m="coach">Ask the coach</button><button class="tab" data-m="practice">Practice page</button></div>
+  <section data-p="coach" class="stack-gap">
+    <p class="hint">Ask how to use browser tools, debug your own page, or practise a web skill. The coach can also build or redesign a safe practice page for your request.</p>
+    <div class="row"><button class="chip" data-ex="Create a beginner practice page where I can learn HTML headings, paragraphs and buttons.">Learn HTML</button><button class="chip" data-ex="Create a practice page for learning CSS colours, spacing and rounded cards.">Learn CSS</button><button class="chip" data-ex="Create a debugging challenge with a broken button and guide me to fix it.">Debug a page</button></div>
+    <textarea class="textarea-panel small" data-q placeholder="What do you want to learn or practise? The coach will answer and can build a custom practice page…"></textarea>
+    <div class="row"><button class="btn primary" data-ask>Ask the coach</button><span class="hint" data-msg></span></div>
+    <div class="panel-card form-out" data-ans>Coach answers and step-by-step guidance appear here.</div>
+  </section>
+  <section data-p="practice" class="stack-gap" hidden>
+    <div class="row" style="align-items:center;justify-content:space-between"><div><h3 data-pr-title>Your practice workspace</h3><p class="hint" data-pr-desc>Ask the coach to create a practice page. It will appear here, separate from the coach chat.</p></div><button class="btn" data-pr-reset>Reset preview</button></div>
+    <div class="panel-card" style="padding:0;overflow:hidden"><iframe data-pr-frame title="Custom Web Tricks practice page" sandbox="allow-scripts" referrerpolicy="no-referrer" style="display:block;width:100%;min-height:420px;border:0;background:white" srcdoc="<!doctype html><html><body style='font:16px sans-serif;padding:24px;color:#333'><h2>Your custom practice page will appear here</h2><p>Go to Ask the coach and describe what you want to practise.</p></body></html>"></iframe></div>
+    <p class="hint" data-pr-note>Practice content runs in an isolated preview and cannot access the main WizOS page.</p>
+  </section>`;
+  const q = (sel) => $(sel, el);
+  let lastPracticeDoc = q('[data-pr-frame]').getAttribute('srcdoc');
+  const switchTab = (name) => {
+    $$('[data-m]', el).forEach((b) => b.classList.toggle('is-on', b.dataset.m === name));
+    $$('[data-p]', el).forEach((p) => { p.hidden = p.dataset.p !== name; });
   };
-  q('[data-find]').addEventListener('input', (e) => paint(e.target.value)); q('[data-list]').addEventListener('click', (e) => { const b = e.target.closest('[data-cp]'); if (b) copy(RECIPES[+b.dataset.cp].c); }); paint();
-  const site = q('[data-site]'); const original = site.innerHTML; q('[data-reset]').addEventListener('click', () => { site.innerHTML = original; });
-  $$('[data-ex]', el).forEach((b) => b.addEventListener('click', () => { q('[data-q]').value = b.dataset.ex; }));
+  $$('[data-m]', el).forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.m)));
+  $$('[data-ex]', el).forEach((b) => b.addEventListener('click', () => { q('[data-q]').value = b.dataset.ex; q('[data-q]').focus(); }));
+  q('[data-pr-reset]').addEventListener('click', () => { q('[data-pr-frame]').srcdoc = lastPracticeDoc; q('[data-pr-note]').textContent = 'Preview reset to the most recently generated practice page.'; });
+
+  // Only allow a small, presentational subset of generated markup in the isolated practice frame.
+  const safePracticeHTML = (html) => String(html || '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(script|iframe|object|embed|form|input|button|textarea|select|option|link|meta|base|audio|video|source|svg|math)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
+    .replace(/<(script|iframe|object|embed|form|input|button|textarea|select|option|link|meta|base|audio|video|source|svg|math)\b[^>]*\/?>/gi, '')
+    .replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/\s+(href|src)\s*=\s*("\s*javascript:[^"]*"|'\s*javascript:[^']*'|javascript:[^\s>]+)/gi, '');
+  const safePracticeCSS = (css) => String(css || '').replace(/@import[^;]*;?/gi, '').replace(/url\s*\([^)]*\)/gi, 'none').replace(/expression\s*\([^)]*\)/gi, '');
+  const renderPractice = (data) => {
+    const title = String(data.practiceTitle || 'Custom practice page').slice(0, 100);
+    const description = String(data.practiceDescription || 'Use this isolated page to practise the skill you requested.').slice(0, 500);
+    const body = safePracticeHTML(data.practiceHTML || '<h1>Practice page ready</h1><p>Try the challenge described by your coach.</p>');
+    const css = safePracticeCSS(data.practiceCSS || '');
+    const doc = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'"><title>${esc(title)}</title><style>body{font:16px/1.5 Arial,sans-serif;margin:0;padding:24px;color:#202938;background:#f4f7fb}*{box-sizing:border-box}img{max-width:100%} ${css}</style></head><body><header><p style="font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#68758a">WizOS · Practice sandbox</p><h1>${esc(title)}</h1><p>${esc(description)}</p></header><main>${body}</main></body></html>`;
+    lastPracticeDoc = doc;
+    q('[data-pr-title]').textContent = title;
+    q('[data-pr-desc]').textContent = description;
+    q('[data-pr-frame]').srcdoc = doc;
+    q('[data-pr-note]').textContent = 'A new isolated practice page was created from your request. Ask the coach for changes to redesign it.';
+  };
+  const parseCoachPayload = (raw) => {
+    let textOut = String(raw || '').trim();
+    textOut = textOut.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+    try { return JSON.parse(textOut); } catch (_) {
+      const a = textOut.indexOf('{'); const b = textOut.lastIndexOf('}');
+      if (a >= 0 && b > a) { try { return JSON.parse(textOut.slice(a, b + 1)); } catch (_) {} }
+    }
+    return { coachReply: String(raw || 'I could not format the response. Please try asking again.') };
+  };
   q('[data-ask]').addEventListener('click', async () => {
-    const t = q('[data-q]').value.trim(); if (!t) return; q('[data-msg]').textContent = 'Thinking…';
-    const prompt = `You are a friendly browser Developer Tools coach for non-technical people using Chrome (version 109 on Windows). Give short, numbered, click-by-click steps and any exact Console code to paste. Only help with things that change the user's own screen, their own pages, games, learning, or debugging. Politely decline anything that bypasses logins, paywalls, access restrictions or security, or that impersonates a site. Question: ${t}`;
-    try { q('[data-ans]').innerHTML = mdLite(await askAI([{ role: 'user', content: prompt }])); q('[data-msg]').textContent = ''; } catch (e) { q('[data-msg]').textContent = `✗ ${e.message}`; }
+    const t = q('[data-q]').value.trim();
+    if (!t) { q('[data-msg]').textContent = 'Tell the coach what you want to learn first.'; return; }
+    q('[data-ask]').disabled = true; q('[data-msg]').textContent = 'Coach is thinking and preparing your practice page…';
+    const prompt = `You are the friendly Web Tricks coach inside WizOS for a beginner using Chrome 109 on Windows. Answer with practical, numbered steps. Focus on legitimate browser learning, HTML/CSS, debugging, accessibility, and the user's own sites. Never help bypass logins, paywalls, access controls, or security. Also create a small, safe, offline practice page tailored to the user's request. Return ONLY valid JSON with exactly these keys: "coachReply" (plain text with numbered steps), "practiceTitle" (short title), "practiceDescription" (one or two sentences), "practiceHTML" (body fragment only; use simple semantic HTML such as headings, paragraphs, divs, lists, labels and spans; no script, forms, inputs, buttons, iframe, SVG, external links, or external assets), and "practiceCSS" (CSS only; no imports, URLs, scripts, or external resources). The practice page should be a different mini website/scenario from the main WizOS page and should reflect the user's request. If the user asks for a change to an existing practice page, redesign the page accordingly. Do not put JSON in Markdown fences. User request: ${t}`;
+    try {
+      const raw = await askAI([{ role: 'user', content: prompt }]);
+      const data = parseCoachPayload(raw);
+      q('[data-ans]').innerHTML = mdLite(data.coachReply || 'Here are the steps for your request.');
+      if (data.practiceHTML || data.practiceTitle || data.practiceCSS) {
+        renderPractice(data);
+        q('[data-msg]').textContent = 'Answer ready · practice page created/updated';
+      } else {
+        q('[data-msg]').textContent = 'Answer ready · no practice page was returned, so try asking for a custom practice page.';
+      }
+    } catch (e) { q('[data-msg]').textContent = `✗ ${e.message}`; }
+    finally { q('[data-ask]').disabled = false; }
   });
 }
 
