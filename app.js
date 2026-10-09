@@ -87,22 +87,19 @@ const thumbOf = (c) => {
 /* ffmpeg.wasm (video/audio + rare image formats), loaded on first use */
 let ffP = null;
 const FF_WRAPPER = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js';
-const FF_CORE = new URL('vendor/ffmpeg-core.js', document.baseURI).href;
+// Single-thread 0.11.1 core avoids the SIMD build that fails on older CPUs.
+// Keep core files on the same CDN package path: the repo's previous files were HTML error pages.
+const FF_CORE = 'https://unpkg.com/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js';
 const errText = (e) => String((e && (e.message || e.reason || e.type)) || e || 'unknown error');
 const ffFetchFile = async (f) => new Uint8Array(await f.arrayBuffer());
 function getFF() {
   return (ffP ||= (async () => {
-    // Use the official 0.11.6 wrapper from jsDelivr so its matching webpack chunk
-    // is resolved from the CDN. The non-SIMD core files remain hosted in this repo.
-    for (const file of ['vendor/ffmpeg-core.js', 'vendor/ffmpeg-core.wasm', 'vendor/ffmpeg-core.worker.js']) {
-      const r = await fetch(file, { method: 'HEAD' });
-      if (!r.ok) throw new Error(`${file} is missing from your site (HTTP ${r.status}). Check the vendor folder and filename.`);
-    }
     await loadScript(FF_WRAPPER);
     if (!window.FFmpeg || typeof window.FFmpeg.createFFmpeg !== 'function') {
-      throw new Error('The official FFmpeg 0.11.6 wrapper did not initialize. Check the network/CDN connection.');
+      throw new Error('FFmpeg 0.11.6 wrapper did not initialize. Check the CDN connection.');
     }
-    const ff = window.FFmpeg.createFFmpeg({ log: false, corePath: FF_CORE });
+    // core-st is the single-thread core; mainName is required for this package.
+    const ff = window.FFmpeg.createFFmpeg({ log: false, mainName: 'main', corePath: FF_CORE });
     await ff.load();
     return { ff, fetchFile: window.FFmpeg.fetchFile || ffFetchFile };
   })().catch((e) => { ffP = null; throw new Error(`The video converter could not start: ${errText(e)}`); }));
