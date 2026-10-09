@@ -86,24 +86,43 @@ const thumbOf = (c) => {
 
 /* ffmpeg.wasm (video/audio + rare image formats), loaded on first use */
 let ffP = null;
-const FF_CORE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+const FF_WRAPPER = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js';
+const FF_CORE = new URL('vendor/ffmpeg-core.js', document.baseURI).href;
 const errText = (e) => String((e && (e.message || e.reason || e.type)) || e || 'unknown error');
-const asBlobURL = async (url, type) => { const r = await fetch(url); if (!r.ok) throw new Error(`${url.split('/').pop()} could not be loaded (error ${r.status})`); return URL.createObjectURL(new Blob([await r.arrayBuffer()], { type })); };
 const ffFetchFile = async (f) => new Uint8Array(await f.arrayBuffer());
 function getFF() {
   return (ffP ||= (async () => {
-    // vendor/ffmpeg.js starts its helper (814.ffmpeg.js) from the same folder, so both files must sit side by side.
-    for (const file of ['vendor/ffmpeg.js', 'vendor/814.ffmpeg.js']) { const r = await fetch(file, { method: 'HEAD' }); if (!r.ok) throw new Error(`${file} is missing from your site (error ${r.status}). Upload it to the vendor folder.`); }
-    await loadScript('vendor/ffmpeg.js'); const ff = new window.FFmpegWASM.FFmpeg();
-    await ff.load({ coreURL: await asBlobURL(`${FF_CORE}/ffmpeg-core.js`, 'text/javascript'), wasmURL: await asBlobURL(`${FF_CORE}/ffmpeg-core.wasm`, 'application/wasm') });
-    return { ff, fetchFile: ffFetchFile };
+    // Use the official 0.11.6 wrapper from jsDelivr so its matching webpack chunk
+    // is resolved from the CDN. The non-SIMD core files remain hosted in this repo.
+    for (const file of ['vendor/ffmpeg-core.js', 'vendor/ffmpeg-core.wasm', 'vendor/ffmpeg-core.worker.js']) {
+      const r = await fetch(file, { method: 'HEAD' });
+      if (!r.ok) throw new Error(`${file} is missing from your site (HTTP ${r.status}). Check the vendor folder and filename.`);
+    }
+    await loadScript(FF_WRAPPER);
+    if (!window.FFmpeg || typeof window.FFmpeg.createFFmpeg !== 'function') {
+      throw new Error('The official FFmpeg 0.11.6 wrapper did not initialize. Check the network/CDN connection.');
+    }
+    const ff = window.FFmpeg.createFFmpeg({ log: false, corePath: FF_CORE });
+    await ff.load();
+    return { ff, fetchFile: window.FFmpeg.fetchFile || ffFetchFile };
   })().catch((e) => { ffP = null; throw new Error(`The video converter could not start: ${errText(e)}`); }));
 }
 async function ffRun(file, args, outName, onP) {
-  const { ff, fetchFile } = await getFF(); const inn = `in.${(file.name.split('.').pop() || 'bin').replace(/\W/g, '')}`;
-  await ff.writeFile(inn, await fetchFile(file)); const h = ({ progress }) => onP?.(Math.min(1, Math.max(0, progress))); ff.on('progress', h);
-  try { await ff.exec(['-i', inn, ...args, outName]); const d = await ff.readFile(outName); return new Blob([d]); } finally { ff.off('progress', h); try { await ff.deleteFile(inn); await ff.deleteFile(outName); } catch { /* ignore */ } }
+  const { ff, fetchFile } = await getFF();
+  const inn = `in.${(file.name.split('.').pop() || 'bin').replace(/\W/g, '')}`;
+  const h = ({ ratio }) => onP?.(Math.min(1, Math.max(0, ratio || 0)));
+  ff.setProgress(({ ratio }) => onP?.(Math.min(1, Math.max(0, ratio || 0))));
+  ff.FS('writeFile', inn, await fetchFile(file));
+  try {
+    await ff.run('-i', inn, ...args, outName);
+    const d = ff.FS('readFile', outName);
+    return new Blob([d]);
+  } finally {
+    try { ff.FS('unlink', inn); } catch { /* ignore */ }
+    try { ff.FS('unlink', outName); } catch { /* ignore */ }
+  }
 }
+
 function bmpBlob(c) {
   const w = c.width; const h = c.height; const d = c.getContext('2d').getImageData(0, 0, w, h).data; const rs = w * 4; const buf = new ArrayBuffer(54 + rs * h); const v = new DataView(buf); const u = new Uint8Array(buf);
   v.setUint16(0, 0x4d42, true); v.setUint32(2, 54 + rs * h, true); v.setUint32(10, 54, true); v.setUint32(14, 40, true); v.setInt32(18, w, true); v.setInt32(22, h, true); v.setUint16(26, 1, true); v.setUint16(28, 32, true); v.setUint32(34, rs * h, true);
