@@ -714,6 +714,10 @@ function chunkBytes(t, maxBytes) {
   if (cur) out.push(cur); return out;
 }
 async function ltCheck(text, lang, signal) {
+  // LanguageTool's auto-detection is unreliable for very short text (e.g. 'i best' can be classified as Danish).
+  // For short, plain-Latin snippets, use English (US) as a safe fallback; users can choose a specific language above.
+  const compact = text.trim();
+  if (lang === 'auto' && compact.length < 80 && /^[\x00-\x7F\s]+$/.test(compact)) lang = 'en-US';
   const matches = []; let base = 0;
   for (const chunk of chunkText(text, 15000)) {
     const r = await fetch('https://api.languagetool.org/v2/check', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ text: chunk, language: lang }), signal });
@@ -729,11 +733,11 @@ function writeTool(el) {
     <textarea class="textarea-panel" data-src placeholder="Paste or type your text — long documents are fine" aria-label="Text to translate"></textarea>
     <div class="row"><button class="btn primary" data-tgo>Translate</button><span class="hint" data-tmsg></span></div>
     <textarea class="textarea-panel" data-dst readonly placeholder="Translation appears here" aria-label="Translation"></textarea><div class="row"><button class="btn" data-tcopy>Copy translation</button><span class="hint" data-tmeter></span></div></section>
-  <section data-p="gr" class="stack-gap" hidden><div class="row"><select class="select-field" data-glang aria-label="Language"><option value="auto">Detect language</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="de-DE">German</option><option value="fr">French</option><option value="es">Spanish</option><option value="it">Italian</option><option value="pt-PT">Portuguese</option><option value="nl">Dutch</option></select></div>
+  <section data-p="gr" class="stack-gap" hidden><div class="row"><select class="select-field" data-glang aria-label="Language"><option value="en-US" selected>English (US) — recommended</option><option value="en-GB">English (UK)</option><option value="auto">Detect language (best for longer text)</option><option value="de-DE">German</option><option value="fr">French</option><option value="es">Spanish</option><option value="it">Italian</option><option value="pt-PT">Portuguese</option><option value="nl">Dutch</option></select></div>
     <textarea class="textarea-panel" data-gtxt placeholder="Paste your text to check spelling and grammar" aria-label="Text to check"></textarea>
     <div class="row"><button class="btn primary" data-ggo>Check grammar</button><button class="btn" data-gfix>Fix all</button><button class="btn" data-gcopy>Copy text</button><span class="hint" data-gmsg></span></div><div class="list" data-gout></div>
     <p class="hint" data-gmeter></p>
-    <p class="hint">Grammar checking covers English and major European languages. For other languages, the backup AI proofreader will suggest a corrected version.</p></section>`;
+    <p class="hint">Checks spelling, grammar, capitalization and punctuation. English (US) is selected by default because automatic detection can mistake very short English text for another language. Choose a language for best results; Auto-detect works better with longer text. For other languages, the backup AI proofreader may suggest corrections.</p></section>`;
   const q = (s) => $(s, el);
   $$('[data-m]', el).forEach((t) => t.addEventListener('click', () => { $$('[data-m]', el).forEach((x) => x.classList.toggle('is-on', x === t)); $$('[data-p]', el).forEach((p) => { p.hidden = p.dataset.p !== t.dataset.m; }); }));
   const meters = () => { q('[data-tmeter]').textContent = aiLeft('translate'); q('[data-gmeter]').textContent = aiLeft('grammar'); }; meters();
