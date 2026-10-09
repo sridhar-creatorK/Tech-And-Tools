@@ -97,9 +97,15 @@ let ffP = null;
  * Keep these three core files from the SAME core-st 0.11.1 package.
  * Do not mix them with @ffmpeg/core 0.12.x files.
  */
-const FF_WRAPPER = 'vendor/ffmpeg.min.js';
-const FF_CHUNK = 'vendor/046d0074eee1d99a674a.js';
-const FF_CORE = 'vendor/ffmpeg-core.js';
+// Resolve local assets relative to app.js itself, not the current page.
+// The Media Converter lives one directory below the site root on GitHub Pages.
+const APP_SCRIPT_URL = (document.currentScript && document.currentScript.src)
+  ? document.currentScript.src
+  : new URL('app.js', document.baseURI).href;
+const APP_BASE_URL = new URL('.', APP_SCRIPT_URL);
+const FF_WRAPPER = new URL('vendor/ffmpeg.min.js', APP_BASE_URL).href;
+const FF_CHUNK = new URL('vendor/046d0074eee1d99a674a.js', APP_BASE_URL).href;
+const FF_CORE = new URL('vendor/ffmpeg-core.js', APP_BASE_URL).href;
 const errText = (e) => String((e && (e.message || e.reason || e.type)) || e || 'unknown error');
 const ffFetchFile = async (f) => new Uint8Array(await f.arrayBuffer());
 
@@ -112,7 +118,7 @@ async function getFF() {
       try { await loadScript(FF_CHUNK); } catch (_) { /* report the clearer error below */ }
     }
     if (!window.FFmpeg || typeof window.FFmpeg.createFFmpeg !== 'function') {
-      throw new Error('FFmpeg wrapper did not initialize. Check that vendor/ffmpeg.min.js and vendor/046d0074eee1d99a674a.js are both uploaded from @ffmpeg/ffmpeg 0.11.6.');
+      throw new Error('FFmpeg wrapper did not initialize. Check the Network tab for the exact URL/status of ffmpeg.min.js and 046d0074eee1d99a674a.js; both must be from @ffmpeg/ffmpeg 0.11.6 and stored in the site's root vendor folder.');
     }
 
     // corePath must be a real URL/path, not a blob URL. The 0.11 wrapper
