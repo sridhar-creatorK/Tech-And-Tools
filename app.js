@@ -98,16 +98,21 @@ let ffP = null;
  * Do not mix them with @ffmpeg/core 0.12.x files.
  */
 const FF_WRAPPER = 'vendor/ffmpeg.min.js';
+const FF_CHUNK = 'vendor/046d0074eee1d99a674a.js';
 const FF_CORE = 'vendor/ffmpeg-core.js';
 const errText = (e) => String((e && (e.message || e.reason || e.type)) || e || 'unknown error');
 const ffFetchFile = async (f) => new Uint8Array(await f.arrayBuffer());
 
 async function getFF() {
   return (ffP ||= (async () => {
-    // Load the 0.11.6 wrapper exactly once. It exposes window.FFmpeg.
+    // Load the 0.11.6 split bundle. Some static hosts/browsers fail to
+    // resolve its companion chunk automatically, so explicitly load it too.
     await loadScript(FF_WRAPPER);
     if (!window.FFmpeg || typeof window.FFmpeg.createFFmpeg !== 'function') {
-      throw new Error('FFmpeg 0.11.6 wrapper did not load correctly. Check vendor/ffmpeg.min.js.');
+      try { await loadScript(FF_CHUNK); } catch (_) { /* report the clearer error below */ }
+    }
+    if (!window.FFmpeg || typeof window.FFmpeg.createFFmpeg !== 'function') {
+      throw new Error('FFmpeg wrapper did not initialize. Check that vendor/ffmpeg.min.js and vendor/046d0074eee1d99a674a.js are both uploaded from @ffmpeg/ffmpeg 0.11.6.');
     }
 
     // corePath must be a real URL/path, not a blob URL. The 0.11 wrapper
