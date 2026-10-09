@@ -983,12 +983,82 @@ function tricksTool(el) {
     q('[data-pr-note]').textContent = 'A new isolated practice page was created from your request. Ask the coach for changes to redesign it.';
   };
   const parseCoachPayload = (raw) => {
-    let textOut = String(raw || '').trim();
-    textOut = textOut.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
-    try { return JSON.parse(textOut); } catch (_) {
-      const a = textOut.indexOf('{'); const b = textOut.lastIndexOf('}');
-      if (a >= 0 && b > a) { try { return JSON.parse(textOut.slice(a, b + 1)); } catch (_) {} }
+    // AI providers sometimes return a parsed object, a JSON string, fenced JSON,
+    // or explanatory text surrounding JSON. Normalize all of those formats.
+    if (raw && typeof raw === 'object') {
+      if (raw.practiceHTML || raw.practiceTitle || raw.practiceCSS || raw.coachReply) return raw;
+      const nestedText = raw.content || raw.response || raw.text || raw.output || raw.result ||
+        raw.choices?.[0]?.message?.content || raw.data?.content || raw.data?.response;
+      if (typeof nestedText === 'string') raw = nestedText;
+      else raw = JSON.stringify(raw);
     }
+    let textOut = String(raw || '').replace(/^\uFEFF/, '').trim();
+    const unfence = (s) => s.replace(/^\s*```(?:json|javascript|js)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+    textOut = unfence(textOut);
+    const tryJSON = (s) => { try { return JSON.parse(s); } catch (_) { return null; } };
+    let parsed = tryJSON(textOut);
+    if (typeof parsed === 'string') parsed = tryJSON(unfence(parsed)) || parsed;
+    if (parsed && typeof parsed === 'object') {
+      // Some proxies wrap the model result one extra level deep.
+      for (const key of ['result', 'output', 'response', 'content', 'text', 'message']) {
+        if (!(parsed.practiceHTML || parsed.practiceTitle || parsed.coachReply) && typeof parsed[key] === 'string') {
+          const inner = tryJSON(unfence(parsed[key]));
+          if (inner && typeof inner === 'object') { parsed = inner; break; }
+        }
+      }
+      if (parsed && typeof parsed === 'object' && (parsed.practiceHTML || parsed.practiceTitle || parsed.practiceCSS || parsed.coachReply)) return parsed;
+      if (parsed && typeof parsed === 'object') {
+        const nested = parsed.choices?.[0]?.message?.content || parsed.data?.content || parsed.data?.response;
+        if (typeof nested === 'string') {
+          const inner = tryJSON(unfence(nested));
+          if (inner && typeof inner === 'object') return inner;
+          textOut = nested;
+        }
+      }
+    }
+    // Find a balanced JSON object without being fooled by braces inside strings.
+    let start = -1, depth = 0, inString = false, escaped = false;
+    for (let i = 0; i < textOut.length; i++) {
+      const ch = textOut[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (ch === '\\') escaped = true;
+        else if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') inString = true;
+      else if (ch === '{') { if (depth === 0) start = i; depth++; }
+      else if (ch === '}' && depth > 0) {
+        depth--;
+        if (depth === 0 && start >= 0) {
+          parsed = tryJSON(textOut.slice(start, i + 1));
+          if (parsed && typeof parsed === 'object') return parsed;
+          start = -1;
+        }
+      }
+    }
+    // Last-resort extraction: parse individual JSON string values even if one
+    // unrelated field made the full payload invalid.
+    const readJSONString = (key) => {
+      const re = new RegExp('"' + key + '"\\s*:\\s*"', 'i');
+      const m = re.exec(textOut); if (!m) return '';
+      const from = m.index + m[0].length - 1; let esc = false;
+      for (let i = from + 1; i < textOut.length; i++) {
+        const ch = textOut[i];
+        if (esc) esc = false;
+        else if (ch === '\\') esc = true;
+        else if (ch === '"') { const v = tryJSON(textOut.slice(from, i + 1)); return typeof v === 'string' ? v : ''; }
+      }
+      return '';
+    };
+    const fallback = {
+      coachReply: readJSONString('coachReply'),
+      practiceTitle: readJSONString('practiceTitle'),
+      practiceDescription: readJSONString('practiceDescription'),
+      practiceHTML: readJSONString('practiceHTML'),
+      practiceCSS: readJSONString('practiceCSS')
+    };
+    if (fallback.practiceHTML || fallback.practiceTitle || fallback.practiceCSS || fallback.coachReply) return fallback;
     return { coachReply: String(raw || 'I could not format the response. Please try asking again.') };
   };
   q('[data-ask]').addEventListener('click', async () => {
@@ -1000,7 +1070,7 @@ function tricksTool(el) {
       const raw = await askAI([{ role: 'user', content: prompt }]);
       const data = parseCoachPayload(raw);
       q('[data-ans]').innerHTML = mdLite(data.coachReply || 'Here are the steps for your request.');
-      if (data.practiceHTML || data.practiceTitle || data.practiceCSS) {
+      if (data.practiceHTML || data.practiceTitle || data.practiceCSS || data.practiceDescription) {
         renderPractice(data);
         q('[data-msg]').textContent = 'Answer ready · practice page created/updated';
       } else {
