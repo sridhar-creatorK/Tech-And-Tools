@@ -87,22 +87,46 @@ const thumbOf = (c) => {
 /* ffmpeg.wasm (video/audio + rare image formats), loaded on first use */
 let ffP = null;
 const FF_WRAPPER = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js';
-const FF_CORE = new URL('vendor/ffmpeg-core.js', document.baseURI).href;
+// Single-thread 0.11.1 core: avoids SharedArrayBuffer/COOP+COEP, which GitHub Pages cannot
+// set, and avoids the SIMD build that fails on older CPUs. Served from a real CDN package
+// path rather than this repo's old vendor/ copies, which had silently become cached HTML
+// error pages (an UNPKG "not found" page saved in place of the real .js/.wasm assets) —
+// that mismatch is what produced "Unexpected token '<'" and "createFFmpegCore is not defined".
+const FF_CORE = 'https://unpkg.com/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js';
 const errText = (e) => String((e && (e.message || e.reason || e.type)) || e || 'unknown error');
 const ffFetchFile = async (f) => new Uint8Array(await f.arrayBuffer());
+// A real ffmpeg-core.js is always JavaScript and a real .wasm always starts with the
+// WebAssembly magic bytes (0x00 0x61 0x73 0x6d). An HTTP 200 alone (e.g. a CDN error page
+// served with a 200) does not prove the asset is real, so both are checked before use.
+async function verifyFFAssets() {
+  const jsUrl = FF_CORE;
+  const wasmUrl = FF_CORE.replace(/\.js$/, '.wasm');
+  const [jsRes, wasmRes] = await Promise.all([
+    fetch(jsUrl).catch((e) => { throw new Error(`Could not reach ${jsUrl}: ${errText(e)}`); }),
+    fetch(wasmUrl).catch((e) => { throw new Error(`Could not reach ${wasmUrl}: ${errText(e)}`); }),
+  ]);
+  if (!jsRes.ok) throw new Error(`FFmpeg core script failed to load (HTTP ${jsRes.status}) from ${jsUrl}.`);
+  if (!wasmRes.ok) throw new Error(`FFmpeg core WebAssembly failed to load (HTTP ${wasmRes.status}) from ${wasmUrl}.`);
+  const jsType = (jsRes.headers.get('content-type') || '').toLowerCase();
+  // Some CDN error pages arrive with a generic JavaScript/binary content type, so inspect
+  // the response body too instead of trusting headers alone.
+  const jsHead = (await jsRes.clone().text()).slice(0, 1200).trimStart().toLowerCase();
+  if (jsType.includes('text/html') || jsHead.startsWith('<!doctype html') || jsHead.startsWith('<html') || jsHead.includes('<meta property="og:site_name"')) {
+    throw new Error('The FFmpeg core script URL returned an HTML page instead of JavaScript. The CDN package/version may be wrong.');
+  }
+  const wasmBuf = new Uint8Array(await wasmRes.clone().arrayBuffer());
+  const isWasm = wasmBuf.length >= 4 && wasmBuf[0] === 0x00 && wasmBuf[1] === 0x61 && wasmBuf[2] === 0x73 && wasmBuf[3] === 0x6d;
+  if (!isWasm) throw new Error('The FFmpeg core WebAssembly file is not a real .wasm binary (missing magic bytes). The CDN likely returned an error page.');
+}
 function getFF() {
   return (ffP ||= (async () => {
-    // Use the official 0.11.6 wrapper from jsDelivr so its matching webpack chunk
-    // is resolved from the CDN. The non-SIMD core files remain hosted in this repo.
-    for (const file of ['vendor/ffmpeg-core.js', 'vendor/ffmpeg-core.wasm', 'vendor/ffmpeg-core.worker.js']) {
-      const r = await fetch(file, { method: 'HEAD' });
-      if (!r.ok) throw new Error(`${file} is missing from your site (HTTP ${r.status}). Check the vendor folder and filename.`);
-    }
+    await verifyFFAssets();
     await loadScript(FF_WRAPPER);
     if (!window.FFmpeg || typeof window.FFmpeg.createFFmpeg !== 'function') {
       throw new Error('The official FFmpeg 0.11.6 wrapper did not initialize. Check the network/CDN connection.');
     }
-    const ff = window.FFmpeg.createFFmpeg({ log: false, corePath: FF_CORE });
+    // core-st is the single-thread core; mainName is required for this package.
+    const ff = window.FFmpeg.createFFmpeg({ log: false, mainName: 'main', corePath: FF_CORE });
     await ff.load();
     return { ff, fetchFile: window.FFmpeg.fetchFile || ffFetchFile };
   })().catch((e) => { ffP = null; throw new Error(`The video converter could not start: ${errText(e)}`); }));
@@ -600,7 +624,7 @@ function aiGuard(f, chars) {
 }
 /* Runs one request through the chain: main first, then Backup 1, 2, 3. Returns { value, via, tier }. */
 async function aiChain(f, providers, call, chars) {
-  aiGuard(f, chars); aiLast[f] = Date.now(); let originBlocked = false; let prev = '';
+  aiGuard(f, chars); aiLast[f] = Date.now(); call.feature = f; let originBlocked = false; let prev = '';
   for (const [i, p] of providers.entries()) {
     const key = `${f}:${p.id}`; const tier = i === 0 ? 'Main AI' : `Backup ${i}`;
     if (p.ready && !p.ready()) continue; // not available in this browser
@@ -624,8 +648,11 @@ const within = (pr, ms) => Promise.race([pr, new Promise((_, rej) => { setTimeou
 const withSystem = (messages, system) => (system && messages.length ? [{ role: messages[0].role, content: `${system}\n\n${messages[0].content}` }, ...messages.slice(1)] : messages);
 const aiWorker = (id, name, url) => ({
   id, name, timeout: 40000,
-  async run({ messages, system }, signal) {
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: withSystem(messages, system) }), signal });
+  async run({ messages, system, feature }, signal) {
+    // feature tells the Worker which output-token budget to use (e.g. Web Tricks' JSON
+    // payload needs far more room than a short chat reply). The Worker maps this to a
+    // fixed, server-side budget — it never accepts a raw token count from the client.
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: withSystem(messages, system), feature }), signal });
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.error || !j.reply) { const err = new Error(j.error || `status ${r.status}`); if (r.status === 403) err.code = 'origin'; throw err; }
     return j.reply;
@@ -725,6 +752,28 @@ async function ltCheck(text, lang, signal) {
   }
   return matches;
 }
+// LanguageTool does not catch every run-on sentence. Add a conservative English-only
+// punctuation hint when a new independent clause starts with a common subject word.
+function addPunctuationHints(text, matches, lang) {
+  if (!(lang === 'auto' || /^en(?:-|$)/i.test(lang))) return matches;
+  const hints = [];
+  const boundary = /\s+(?=(?:I|You|We|They|He|She|It|This|That|These|Those|My|Our|Their|There|The|A|An)\b)/g;
+  let m;
+  while ((m = boundary.exec(text))) {
+    const start = m.index;
+    const before = text.slice(0, start).trimEnd();
+    const after = text.slice(start + m[0].length);
+    if (!before || !after || /[.!?;:,]$/.test(before)) continue;
+    // Avoid tiny fragments and boundaries inside a phrase such as "oranges and I".
+    if (!/[A-Za-z0-9]$/.test(before) || /\b(?:and|or|but|because|although|while|when|if|that|which|who|with|for|to|of|in|on|at|by)$/i.test(before)) continue;
+    const firstSentence = before.split(/[.!?\n]+/).pop().trim();
+    if (firstSentence.split(/\s+/).length < 2) continue;
+    const len = m[0].length;
+    if (matches.some((x) => start < x.offset + x.length && start + len > x.offset)) continue;
+    hints.push({ offset: start, length: len, message: 'Possible missing punctuation between sentences.', replacements: [{ value: '. ' }], rule: { id: 'WIZOS_POSSIBLE_RUN_ON', issueType: 'typographical' } });
+  }
+  return matches.concat(hints).sort((a, b) => a.offset - b.offset);
+}
 function writeTool(el) {
   const opt = (sel) => LANGS.map(([c, n]) => `<option value="${c}"${c === sel ? ' selected' : ''}>${n}</option>`).join('');
   el.innerHTML = `<div class="tabs"><button class="tab is-on" data-m="tr">Translate</button><button class="tab" data-m="gr">Grammar check</button></div>
@@ -732,7 +781,7 @@ function writeTool(el) {
     <textarea class="textarea-panel" data-src placeholder="Paste or type your text — long documents are fine" aria-label="Text to translate"></textarea>
     <div class="row"><button class="btn primary" data-tgo>Translate</button><span class="hint" data-tmsg></span></div>
     <textarea class="textarea-panel" data-dst readonly placeholder="Translation appears here" aria-label="Translation"></textarea><div class="row"><button class="btn" data-tcopy>Copy translation</button><span class="hint" data-tmeter></span></div></section>
-  <section data-p="gr" class="stack-gap" hidden><div class="row"><select class="select-field" data-glang aria-label="Language"><option value="auto">Detect language</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="de-DE">German</option><option value="fr">French</option><option value="es">Spanish</option><option value="it">Italian</option><option value="pt-PT">Portuguese</option><option value="nl">Dutch</option></select></div>
+  <section data-p="gr" class="stack-gap" hidden><div class="row"><select class="select-field" data-glang aria-label="Language"><option value="en-US" selected>English (US)</option><option value="auto">Detect language</option><option value="en-GB">English (UK)</option><option value="de-DE">German</option><option value="fr">French</option><option value="es">Spanish</option><option value="it">Italian</option><option value="pt-PT">Portuguese</option><option value="nl">Dutch</option></select></div>
     <textarea class="textarea-panel" data-gtxt placeholder="Paste your text to check spelling and grammar" aria-label="Text to check"></textarea>
     <div class="row"><button class="btn primary" data-ggo>Check grammar</button><button class="btn" data-gfix>Fix all</button><button class="btn" data-gcopy>Copy text</button><span class="hint" data-gmsg></span></div><div class="list" data-gout></div>
     <p class="hint" data-gmeter></p>
@@ -769,7 +818,7 @@ function writeTool(el) {
     gBusy = true; q('[data-ggo]').disabled = true; gmsg('Checking…');
     try {
       const { value, via } = await aiChain('grammar', grammarChain(), { text, lang: q('[data-glang]').value, note: gmsg }, text.length);
-      if (value.kind === 'matches') { matches = value.matches; paintMatches(); gmsg(`${matches.length ? `${matches.length} issue(s) found` : 'All good'} · ${via}`); }
+      if (value.kind === 'matches') { matches = addPunctuationHints(text, value.matches, q('[data-glang]').value); paintMatches(); gmsg(`${matches.length ? `${matches.length} issue(s) found` : 'All good'} · ${via}`); }
       else { matches = []; paintAiFix(text, value.text.trim()); gmsg(`Suggested corrections shown · ${via}`); }
     } catch (e) { gmsg(`✗ ${e.message}`); } finally { gBusy = false; q('[data-ggo]').disabled = false; meters(); }
   };
@@ -926,20 +975,22 @@ function letterTool(el) {
 }
 
 /* ---------- Web Tricks ---------- */
+// Fixed, offline reference tricks — kept as a fallback alongside the AI coach so Web
+// Tricks still has useful content even if the AI is unavailable.
 const RECIPES = [
-  { t: 'Chrome dino game: don’t die', g: 'Play the offline dinosaur game without ever losing.', s: ['Turn off your internet (or type chrome://dino in the address bar) and open the dinosaur game.', 'Press F12, then click the Console tab.', 'Paste the line below, press Enter, then press Space to play.', 'Refresh the page to go back to normal.'], c: 'Runner.instance_.gameOver = function () {};' },
-  { t: 'Change the dino’s speed', g: 'Make the game faster or slower.', s: ['Open the dino game and the Console as above.', 'Paste the line below. Bigger numbers are faster.'], c: 'Runner.instance_.setSpeed(12);' },
+  { t: 'Chrome dino game: don\u2019t die', g: 'Play the offline dinosaur game without ever losing.', s: ['Turn off your internet (or type chrome://dino in the address bar) and open the dinosaur game.', 'Press F12, then click the Console tab.', 'Paste the line below, press Enter, then press Space to play.', 'Refresh the page to go back to normal.'], c: 'Runner.instance_.gameOver = function () {};' },
+  { t: 'Change the dino\u2019s speed', g: 'Make the game faster or slower.', s: ['Open the dino game and the Console as above.', 'Paste the line below. Bigger numbers are faster.'], c: 'Runner.instance_.setSpeed(12);' },
   { t: 'Edit any text on a page', g: 'Change words on a page on your own screen (great for learning or mock-ups). Nothing is saved to the website.', s: ['Press F12 and open the Console.', 'Paste the line below and press Enter.', 'Click any text on the page and type. Refresh to undo.'], c: "document.designMode = 'on';" },
-  { t: 'Remove a pop-up covering the page', g: 'Get rid of a newsletter or cookie box that is blocking content you can already see.', s: ['Right-click the pop-up and choose Inspect.', 'In the Elements panel the box is highlighted. Press Delete to remove it.', 'If the page won’t scroll, click <body> in Elements and, in the Styles panel, untick “overflow: hidden”.', 'This only clears what covers the page. It will not unlock content that a site reserves for members.'] },
+  { t: 'Remove a pop-up covering the page', g: 'Get rid of a newsletter or cookie box that is blocking content you can already see.', s: ['Right-click the pop-up and choose Inspect.', 'In the Elements panel the box is highlighted. Press Delete to remove it.', 'If the page won\u2019t scroll, click <body> in Elements and, in the Styles panel, untick \u201coverflow: hidden\u201d.', 'This only clears what covers the page. It will not unlock content that a site reserves for members.'] },
   { t: 'Show a password you typed', g: 'Check what you typed in a password box on your own account.', s: ['Right-click the password box and choose Inspect.', 'Double-click type="password" in the highlighted line.', 'Change it to text and press Enter. The dots turn into letters.'] },
   { t: 'See how a page looks on a phone', g: 'Test any page at phone or tablet size.', s: ['Press F12, then Ctrl + Shift + M.', 'Pick a device at the top, such as Samsung Galaxy or iPad.', 'Press Ctrl + Shift + M again to go back.'] },
-  { t: 'Test a slow or offline connection', g: 'See how a page behaves on bad internet.', s: ['Press F12 and open the Network tab.', 'Find the “No throttling” dropdown and choose Slow 3G or Offline.', 'Reload the page. Set it back to No throttling when done.'] },
-  { t: 'Find the colours and fonts a page uses', g: 'Copy exact colour codes without a colour-picker tool.', s: ['Right-click the thing you’re curious about and choose Inspect.', 'In the Styles panel, look for color or background-color.', 'Click the little coloured square to see and copy the code. The Computed tab shows the font.'] },
-  { t: 'Speed up any video', g: 'Play a video faster than the player’s buttons allow.', s: ['Press F12 and open the Console.', 'Paste the line below. Use 0.5 for half speed.'], c: "document.querySelector('video').playbackRate = 2;" },
-  { t: 'Start fresh on a site', g: 'Clear one site’s saved data when it’s misbehaving.', s: ['Press F12 and open the Application tab.', 'Choose Storage in the left list.', 'Click “Clear site data”, then reload.'] },
+  { t: 'Test a slow or offline connection', g: 'See how a page behaves on bad internet.', s: ['Press F12 and open the Network tab.', 'Find the \u201cNo throttling\u201d dropdown and choose Slow 3G or Offline.', 'Reload the page. Set it back to No throttling when done.'] },
+  { t: 'Find the colours and fonts a page uses', g: 'Copy exact colour codes without a colour-picker tool.', s: ['Right-click the thing you\u2019re curious about and choose Inspect.', 'In the Styles panel, look for color or background-color.', 'Click the little coloured square to see and copy the code. The Computed tab shows the font.'] },
+  { t: 'Speed up any video', g: 'Play a video faster than the player\u2019s buttons allow.', s: ['Press F12 and open the Console.', 'Paste the line below. Use 0.5 for half speed.'], c: "document.querySelector('video').playbackRate = 2;" },
+  { t: 'Start fresh on a site', g: 'Clear one site\u2019s saved data when it\u2019s misbehaving.', s: ['Press F12 and open the Application tab.', 'Choose Storage in the left list.', 'Click \u201cClear site data\u201d, then reload.'] },
 ];
 function tricksTool(el) {
-  el.innerHTML = `<div class="tabs"><button class="tab is-on" data-m="coach">Ask the coach</button><button class="tab" data-m="practice">Practice page</button></div>
+  el.innerHTML = `<div class="tabs"><button class="tab is-on" data-m="coach">Ask the coach</button><button class="tab" data-m="practice">Practice page</button><button class="tab" data-m="recipes">Recipes</button></div>
   <section data-p="coach" class="stack-gap">
     <p class="hint">Ask how to use browser tools, debug your own page, or practise a web skill. The coach can also build or redesign a safe practice page for your request.</p>
     <div class="row"><button class="chip" data-ex="Create a beginner practice page where I can learn HTML headings, paragraphs and buttons.">Learn HTML</button><button class="chip" data-ex="Create a practice page for learning CSS colours, spacing and rounded cards.">Learn CSS</button><button class="chip" data-ex="Create a debugging challenge with a broken button and guide me to fix it.">Debug a page</button></div>
@@ -951,7 +1002,8 @@ function tricksTool(el) {
     <div class="row" style="align-items:center;justify-content:space-between"><div><h3 data-pr-title>Your practice workspace</h3><p class="hint" data-pr-desc>Ask the coach to create a practice page. It will appear here, separate from the coach chat.</p></div><button class="btn" data-pr-reset>Reset preview</button></div>
     <div class="panel-card" style="padding:0;overflow:hidden"><iframe data-pr-frame title="Custom Web Tricks practice page" sandbox="allow-scripts" referrerpolicy="no-referrer" style="display:block;width:100%;min-height:420px;border:0;background:white" srcdoc="<!doctype html><html><body style='font:16px sans-serif;padding:24px;color:#333'><h2>Your custom practice page will appear here</h2><p>Go to Ask the coach and describe what you want to practise.</p></body></html>"></iframe></div>
     <p class="hint" data-pr-note>Practice content runs in an isolated preview and cannot access the main WizOS page.</p>
-  </section>`;
+  </section>
+  <section data-p="recipes" class="stack-gap" hidden><input class="field" data-find placeholder="Search recipes — dino, popup, password…" aria-label="Search recipes" /><p class="hint">Fixed, offline reference tricks — handy if the AI coach is busy. Open Developer Tools with F12 (or Ctrl + Shift + I). Right-click → Inspect also works. These tricks change only what you see on your own screen.</p><div data-list class="stack-gap"></div></section>`;
   const q = (sel) => $(sel, el);
   let lastPracticeDoc = q('[data-pr-frame]').getAttribute('srcdoc');
   const switchTab = (name) => {
@@ -961,6 +1013,12 @@ function tricksTool(el) {
   $$('[data-m]', el).forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.m)));
   $$('[data-ex]', el).forEach((b) => b.addEventListener('click', () => { q('[data-q]').value = b.dataset.ex; q('[data-q]').focus(); }));
   q('[data-pr-reset]').addEventListener('click', () => { q('[data-pr-frame]').srcdoc = lastPracticeDoc; q('[data-pr-note]').textContent = 'Preview reset to the most recently generated practice page.'; });
+  const paintRecipes = (f = '') => {
+    q('[data-list]').innerHTML = RECIPES.map((r, i) => [r, i]).filter(([r]) => `${r.t} ${r.g}`.toLowerCase().includes(f.toLowerCase())).map(([r, i]) => `<details class="recipe"><summary>${esc(r.t)}</summary><p>${esc(r.g)}</p><ol>${r.s.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>${r.c ? `<pre class="css-out">${esc(r.c)}</pre><button class="chip" data-cp="${i}">Copy code</button>` : ''}</details>`).join('') || '<p class="hint">No recipe matches.</p>';
+  };
+  q('[data-find]').addEventListener('input', (e) => paintRecipes(e.target.value));
+  q('[data-list]').addEventListener('click', (e) => { const b = e.target.closest('[data-cp]'); if (b) copy(RECIPES[+b.dataset.cp].c); });
+  paintRecipes();
 
   // Only allow a small, presentational subset of generated markup in the isolated practice frame.
   const safePracticeHTML = (html) => String(html || '')
